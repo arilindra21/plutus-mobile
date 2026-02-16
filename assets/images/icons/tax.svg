@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+    <path fill="#133f5d" fill-rule="evenodd" d="M19.788 14.892v6.145c0 .542-.362.903-.906.903H5.118c-.544 0-.906-.361-.906-.903v-1.808c0-.361.181-.632.453-.813a10.6 10.6 0 0 1 2.988-.994h.181c1.63 0 3.351-.18 4.981-.452.09 0 .181 0 .181-.09 1.902-.813 2.989-3.073 6.067-2.892.363.09.725.452.725.904" clip-rule="evenodd" opacity=".2"/>
+    <path stroke="#133f5d" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.35 6.488h4.438v14.549c0 .542-.362.903-.906.903H5.118c-.544 0-.906-.361-.906-.903V2.963c0-.542.362-.903.906-.903H15.35z"/>
+    <path stroke="#133f5d" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.788 7.391v-.903L15.35 2.06h-.906M7.2 13.807h9.6M7.2 17.512h9.6"/>
+    <path stroke="#133f5d" d="M12 4.77 8.378 9.29"/>
+    <ellipse cx="8.492" cy="5.82" stroke="#133f5d" stroke-width=".75" rx=".939" ry=".937"/>
+    <ellipse cx="11.784" cy="8.352" stroke="#133f5d" stroke-width=".75" rx=".939" ry=".937"/>
+</svg>

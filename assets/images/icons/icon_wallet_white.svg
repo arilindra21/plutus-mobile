@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="17" height="16" fill="none" viewBox="0 0 17 16">
+    <g clip-path="url(#a)">
+        <path stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width=".67" d="M2.999 8.345V7.09a1.88 1.88 0 0 1 1.873-1.874h7.68a1.88 1.88 0 0 1 1.873 1.874v4.876a1.877 1.877 0 0 1-1.873 1.873H4.875a1.88 1.88 0 0 1-1.873-1.873V10.68M4.464 5.215l6.364-2.973a.945.945 0 0 1 1.24.464l.293.823"/>
+        <path stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width=".67" d="M11.37 10.799a.991.991 0 1 0 0-1.983.991.991 0 0 0 0 1.983"/>
+        <g filter="url(#b)">
+            <path stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width=".67" d="M11.37 10.8a.991.991 0 1 0 0-1.983.991.991 0 0 0 0 1.982"/>
+        </g>
+        <path fill="#fff" fill-rule="evenodd" d="M12.331 13.439a1.16 1.16 0 0 1-.879.4H4.341a1.187 1.187 0 0 1-1.184-1.19v-2.242c.35-.362.782-.633 1.26-.79a3.54 3.54 0 0 1 2.853.26 9 9 0 0 0 1.567.978q.078.037.16.063c.894.251 1.858-.36 2.904.865a2.2 2.2 0 0 1 .43 1.656" clip-rule="evenodd" opacity=".2"/>
+    </g>
+    <defs>
+        <clipPath id="a">
+            <path fill="#fff" d="M.712 0h16v16h-16z"/>
+        </clipPath>
+        <filter id="b" width="10.652" height="10.652" x="6.043" y="4.482" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+            <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+            <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+            <feGaussianBlur result="effect1_foregroundBlur_2350_84127" stdDeviation="2"/>
+        </filter>
+    </defs>
+</svg>
