@@ -13,7 +13,7 @@ RUN flutter pub get
 COPY . .
 
 # Build Flutter web with release optimizations
-RUN flutter build web --release --web-renderer html
+RUN flutter build web --release
 
 # Stage 2: Serve with Nginx
 FROM nginx:alpine
