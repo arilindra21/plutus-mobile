@@ -59,9 +59,13 @@ class TransactionDetailScreen extends StatelessWidget {
         final isDraft = expense.status == 0;
         final isReturned = expense.status == 7;
         final isRejected = expense.status == 6;
+        final isPendingApproval = expense.status == 3;
         final canEdit = isDraft || isReturned;
         final canDelete = isDraft;
         final canSubmit = isDraft || isReturned;
+
+        // Check if current user can approve this expense (has pending approval task)
+        final canApprove = isPendingApproval && apiProvider.canApproveExpense(expense.id);
 
         return Scaffold(
           backgroundColor: AppColors.background,
@@ -108,7 +112,7 @@ class TransactionDetailScreen extends StatelessWidget {
                         const SizedBox(height: 16),
                         _buildApprovalTimeline(context, expense),
                         const SizedBox(height: 24),
-                        _buildActionButtons(context, canEdit: canEdit, canDelete: canDelete, canSubmit: canSubmit, isApi: true),
+                        _buildActionButtons(context, canEdit: canEdit, canDelete: canDelete, canSubmit: canSubmit, canApprove: canApprove, isApi: true),
                         const SizedBox(height: 40),
                       ],
                     ),
@@ -942,8 +946,41 @@ class TransactionDetailScreen extends StatelessWidget {
     required bool canEdit,
     required bool canDelete,
     required bool canSubmit,
+    bool canApprove = false,
     bool isApi = false,
   }) {
+    // Show approve/reject buttons if user can approve
+    if (canApprove) {
+      return Consumer<ApiExpenseProvider>(
+        builder: (context, apiProvider, _) {
+          final isLoading = apiProvider.isSubmitting;
+          return Row(
+            children: [
+              Expanded(
+                child: _ActionButton(
+                  label: isLoading ? 'Processing...' : 'Reject',
+                  icon: CupertinoIcons.xmark_circle_fill,
+                  color: AppColors.statusRejected,
+                  onTap: isLoading ? null : () => _showRejectDialog(context),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: _ActionButton(
+                  label: isLoading ? 'Processing...' : 'Approve',
+                  icon: CupertinoIcons.checkmark_circle_fill,
+                  color: AppColors.statusApproved,
+                  isPrimary: true,
+                  onTap: isLoading ? null : () => _showApproveDialog(context),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
     if (!canEdit && !canDelete && !canSubmit) {
       return const SizedBox.shrink();
     }
@@ -1019,6 +1056,115 @@ class TransactionDetailScreen extends StatelessWidget {
         context.read<AppProvider>().showNotification('Expense submitted for approval', type: 'success');
         context.read<AppProvider>().goBack();
       }
+    }
+  }
+
+  void _showApproveDialog(BuildContext context) {
+    final commentController = TextEditingController();
+
+    showCupertinoDialog(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Approve Expense'),
+        content: Column(
+          children: [
+            const SizedBox(height: 8),
+            const Text('Are you sure you want to approve this expense?'),
+            const SizedBox(height: 16),
+            CupertinoTextField(
+              controller: commentController,
+              placeholder: 'Add comment (optional)',
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(ctx),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            child: const Text('Approve'),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _approveExpense(context, commentController.text);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRejectDialog(BuildContext context) {
+    final commentController = TextEditingController();
+
+    showCupertinoDialog(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Reject Expense'),
+        content: Column(
+          children: [
+            const SizedBox(height: 8),
+            const Text('Please provide a reason for rejection.'),
+            const SizedBox(height: 16),
+            CupertinoTextField(
+              controller: commentController,
+              placeholder: 'Rejection reason (required)',
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(ctx),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            child: const Text('Reject'),
+            onPressed: () async {
+              if (commentController.text.trim().isEmpty) {
+                return; // Don't allow empty comment for rejection
+              }
+              Navigator.pop(ctx);
+              await _rejectExpense(context, commentController.text);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _approveExpense(BuildContext context, String comment) async {
+    final apiProvider = context.read<ApiExpenseProvider>();
+    final appProvider = context.read<AppProvider>();
+    final expense = apiProvider.selectedExpense;
+    if (expense == null) return;
+
+    final approvalTask = apiProvider.getApprovalTaskForExpense(expense.id);
+    if (approvalTask == null) return;
+
+    final success = await apiProvider.approveTask(approvalTask.id, comment: comment);
+    if (success) {
+      appProvider.showNotification('Expense approved', type: 'success');
+      appProvider.goBack();
+    }
+  }
+
+  Future<void> _rejectExpense(BuildContext context, String comment) async {
+    final apiProvider = context.read<ApiExpenseProvider>();
+    final appProvider = context.read<AppProvider>();
+    final expense = apiProvider.selectedExpense;
+    if (expense == null) return;
+
+    final approvalTask = apiProvider.getApprovalTaskForExpense(expense.id);
+    if (approvalTask == null) return;
+
+    final success = await apiProvider.rejectTask(approvalTask.id, comment: comment);
+    if (success) {
+      appProvider.showNotification('Expense rejected', type: 'success');
+      appProvider.goBack();
     }
   }
 }

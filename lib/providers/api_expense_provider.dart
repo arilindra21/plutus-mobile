@@ -133,6 +133,22 @@ class ApiExpenseProvider extends ChangeNotifier {
   int get draftCount => _expenses.where((e) => e.status == 0).length;
   int get employeePendingCount => pendingExpenses.length;
 
+  /// Get approval task for a specific expense ID (if current user is the approver)
+  ApprovalTaskDTO? getApprovalTaskForExpense(String expenseId) {
+    try {
+      return _approvalTasks.firstWhere(
+        (task) => task.expenseId == expenseId && task.status == 1, // status 1 = pending
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Check if current user can approve this expense
+  bool canApproveExpense(String expenseId) {
+    return getApprovalTaskForExpense(expenseId) != null;
+  }
+
   // ============ Expense Operations ============
 
   // Current user ID for filtering
