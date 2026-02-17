@@ -84,6 +84,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       apiProvider.setUserContext(
         userId: authProvider.user!.id,
         isManager: authProvider.user!.isManager,
+        userProfile: authProvider.user,
       );
     }
 

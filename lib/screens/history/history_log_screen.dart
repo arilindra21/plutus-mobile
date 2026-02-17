@@ -206,18 +206,17 @@ class _HistoryLogScreenState extends State<HistoryLogScreen> {
       final apiProvider = context.read<ApiExpenseProvider>();
       final authProvider = context.read<AuthProvider>();
 
-      // Set user context for expense filtering
+      // Set user context for proper filtering (actorId for non-admin)
       if (authProvider.user != null) {
         apiProvider.setUserContext(
           userId: authProvider.user!.id,
           isManager: authProvider.user!.isManager,
+          userProfile: authProvider.user,
         );
       }
 
-      await apiProvider.fetchReferenceData();
-      await apiProvider.fetchExpenses(refresh: true);
-      // Populate requester info for expenses
-      await apiProvider.populateExpenseRequesterInfo();
+      // Fetch audit log / activity history from API
+      await apiProvider.fetchAuditLog(targetType: 'expense');
     }
     _isInitialized = true;
   }
@@ -237,30 +236,47 @@ class _HistoryLogScreenState extends State<HistoryLogScreen> {
     return Consumer2<AppProvider, ApiExpenseProvider>(
       builder: (context, appProvider, apiProvider, _) {
         final isApprover = appProvider.userCapabilities.canApprove;
-        final expenses = apiProvider.expenses;
+        final auditLogs = apiProvider.auditLogs;
+        final isLoading = apiProvider.isLoadingAuditLog;
 
         return Scaffold(
           backgroundColor: const Color(0xFFF2F2F7),
           body: SafeArea(
             child: Column(
               children: [
-                _buildHeader(context, isApprover, expenses.length),
+                _buildHeader(context, isApprover, auditLogs.length),
                 Expanded(
-                  child: apiProvider.isLoading && expenses.isEmpty
+                  child: isLoading && auditLogs.isEmpty
                       ? const Center(child: CupertinoActivityIndicator(radius: 14))
-                      : expenses.isEmpty
+                      : auditLogs.isEmpty
                           ? _buildEmptyState()
                           : RefreshIndicator(
-                              onRefresh: () => apiProvider.fetchExpenses(refresh: true),
+                              onRefresh: () => apiProvider.fetchAuditLog(),
                               child: ListView.builder(
                                 padding: const EdgeInsets.all(20),
-                                itemCount: expenses.length,
+                                itemCount: auditLogs.length,
                                 itemBuilder: (context, index) {
-                                  return _ApiHistoryItem(
-                                    expense: expenses[index],
-                                    onTap: () {
-                                      apiProvider.setSelectedExpense(expenses[index]);
-                                      context.read<AppProvider>().navigateTo('transactionDetail');
+                                  final item = auditLogs[index];
+                                  return _AuditLogItem(
+                                    item: item,
+                                    onTap: () async {
+                                      // Only navigate if user has permission and it's an expense
+                                      if (item.targetType == 'expense' && item.hasPermission && item.expense != null) {
+                                        apiProvider.setSelectedExpense(item.expense!);
+                                        if (context.mounted) {
+                                          context.read<AppProvider>().navigateTo('transactionDetail');
+                                        }
+                                      } else if (!item.hasPermission) {
+                                        // Show permission error
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('You do not have permission to view this expense'),
+                                              backgroundColor: Color(0xFFFF3B30),
+                                            ),
+                                          );
+                                        }
+                                      }
                                     },
                                   );
                                 },
@@ -796,6 +812,501 @@ class _ApiHistoryItem extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     const Icon(Icons.chevron_right, size: 16, color: Color(0xFFAEAEB2)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// History item using real ApprovalHistoryDTO from API
+class _ApprovalHistoryItem extends StatelessWidget {
+  final ApprovalHistoryDTO item;
+  final VoidCallback onTap;
+
+  const _ApprovalHistoryItem({
+    required this.item,
+    required this.onTap,
+  });
+
+  Map<String, dynamic> _getActionStyle() {
+    switch (item.action.toLowerCase()) {
+      case 'approved':
+      case 'approve':
+        return {
+          'icon': CupertinoIcons.checkmark_circle_fill,
+          'label': 'Approved',
+          'color': const Color(0xFF30D158),
+        };
+      case 'rejected':
+      case 'reject':
+        return {
+          'icon': CupertinoIcons.xmark_circle_fill,
+          'label': 'Rejected',
+          'color': const Color(0xFFFF3B30),
+        };
+      case 'returned':
+      case 'return':
+        return {
+          'icon': CupertinoIcons.arrow_uturn_left_circle_fill,
+          'label': 'Returned',
+          'color': const Color(0xFF007AFF),
+        };
+      case 'submitted':
+      case 'submit':
+        return {
+          'icon': CupertinoIcons.arrow_up_circle_fill,
+          'label': 'Submitted',
+          'color': const Color(0xFF007AFF),
+        };
+      case 'created':
+      case 'create':
+        return {
+          'icon': CupertinoIcons.plus_circle_fill,
+          'label': 'Created',
+          'color': const Color(0xFF5856D6),
+        };
+      case 'edited':
+      case 'edit':
+        return {
+          'icon': CupertinoIcons.pencil_circle_fill,
+          'label': 'Edited',
+          'color': const Color(0xFFFF9500),
+        };
+      default:
+        return {
+          'icon': CupertinoIcons.doc_fill,
+          'label': item.actionDisplay,
+          'color': const Color(0xFF8E8E93),
+        };
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final actionStyle = _getActionStyle();
+    final dateTime = formatActivityDateTime(item.createdAt);
+    final Color color = actionStyle['color'];
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Top row: Actor name, action badge, amount
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Action icon
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        actionStyle['icon'],
+                        size: 20,
+                        color: color,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // Actor and action info
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.actorName,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1C1C1E),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${actionStyle['label']} • ${item.formattedRefId}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF8E8E93),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Amount
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          formatRupiah(item.amount),
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1C1C1E),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: color.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            actionStyle['label'],
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: color,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                // Comment if available
+                if (item.comment != null && item.comment!.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF2F2F7),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '"${item.comment}"',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontStyle: FontStyle.italic,
+                        color: Color(0xFF636366),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                const Divider(height: 1, color: Color(0xFFE5E5EA)),
+                const SizedBox(height: 10),
+                // Bottom row: Category, merchant, date
+                Row(
+                  children: [
+                    // Category icon
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F2F7),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Center(
+                        child: Text(
+                          item.categoryIcon ?? '📋',
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Category & Merchant
+                    Expanded(
+                      child: Text(
+                        '${item.category ?? 'Other'} • ${item.merchant ?? 'Unknown'}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF8E8E93),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    // Date
+                    Text(
+                      dateTime['date'] ?? '',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFFAEAEB2),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.chevron_right, size: 16, color: Color(0xFFAEAEB2)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Audit log item using AuditLogDTO from /reports/audit-log API
+class _AuditLogItem extends StatelessWidget {
+  final AuditLogDTO item;
+  final VoidCallback onTap;
+
+  const _AuditLogItem({
+    required this.item,
+    required this.onTap,
+  });
+
+  Map<String, dynamic> _getActionStyle() {
+    switch (item.action.toLowerCase()) {
+      case 'approve':
+      case 'approved':
+        return {
+          'icon': CupertinoIcons.checkmark_circle_fill,
+          'label': 'Approved',
+          'color': const Color(0xFF30D158),
+        };
+      case 'reject':
+      case 'rejected':
+        return {
+          'icon': CupertinoIcons.xmark_circle_fill,
+          'label': 'Rejected',
+          'color': const Color(0xFFFF3B30),
+        };
+      case 'return':
+      case 'returned':
+        return {
+          'icon': CupertinoIcons.arrow_uturn_left_circle_fill,
+          'label': 'Returned',
+          'color': const Color(0xFF007AFF),
+        };
+      case 'submit':
+      case 'submitted':
+        return {
+          'icon': CupertinoIcons.arrow_up_circle_fill,
+          'label': 'Submitted',
+          'color': const Color(0xFF007AFF),
+        };
+      case 'create':
+      case 'created':
+        return {
+          'icon': CupertinoIcons.plus_circle_fill,
+          'label': 'Created',
+          'color': const Color(0xFF5856D6),
+        };
+      case 'update':
+      case 'updated':
+      case 'edit':
+      case 'edited':
+        return {
+          'icon': CupertinoIcons.pencil_circle_fill,
+          'label': 'Edited',
+          'color': const Color(0xFFFF9500),
+        };
+      case 'delete':
+      case 'deleted':
+        return {
+          'icon': CupertinoIcons.trash_circle_fill,
+          'label': 'Deleted',
+          'color': const Color(0xFFFF3B30),
+        };
+      default:
+        return {
+          'icon': CupertinoIcons.doc_fill,
+          'label': item.actionDisplay,
+          'color': const Color(0xFF8E8E93),
+        };
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final actionStyle = _getActionStyle();
+    final dateTime = formatActivityDateTime(item.createdAt);
+    final Color color = actionStyle['color'];
+    final bool hasDetails = item.expense != null;
+    final bool noPermission = !item.hasPermission;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: noPermission ? const Color(0xFFF8F8F8) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: hasDetails ? onTap : null,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Top row: Actor name, action badge, amount
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Action icon
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        actionStyle['icon'],
+                        size: 20,
+                        color: color,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // Actor and action info
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.actorName ?? 'Unknown User',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1C1C1E),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: color.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  item.expenseRef,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: color,
+                                  ),
+                                ),
+                              ),
+                              if (hasDetails) ...[
+                                const SizedBox(width: 6),
+                                Text(
+                                  '•',
+                                  style: TextStyle(color: Colors.grey[400]),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  formatRupiah(item.amount),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF1C1C1E),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Action badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        actionStyle['label'],
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: color,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                // Show merchant and description only if we have details
+                if (hasDetails) ...[
+                  const SizedBox(height: 10),
+                  // Merchant name
+                  Text(
+                    item.merchant,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF636366),
+                    ),
+                  ),
+                  // Description if available
+                  if (item.description != null && item.description!.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F2F7),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '"${item.description}"',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontStyle: FontStyle.italic,
+                          color: Color(0xFF636366),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+                const SizedBox(height: 10),
+                // Bottom: Date/time
+                Row(
+                  children: [
+                    Icon(CupertinoIcons.clock, size: 14, color: Colors.grey[400]),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${dateTime['date']} at ${dateTime['time']}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFFAEAEB2),
+                      ),
+                    ),
+                    const Spacer(),
+                    if (hasDetails)
+                      const Icon(Icons.chevron_right, size: 16, color: Color(0xFFAEAEB2))
+                    else
+                      Icon(CupertinoIcons.lock_fill, size: 14, color: Colors.grey[400]),
                   ],
                 ),
               ],

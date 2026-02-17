@@ -49,6 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
       apiExpenseProvider.setUserContext(
         userId: authProvider.user!.id,
         isManager: authProvider.user!.isManager,
+        userProfile: authProvider.user,
       );
     }
 

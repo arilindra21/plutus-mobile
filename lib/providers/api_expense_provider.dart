@@ -154,12 +154,17 @@ class ApiExpenseProvider extends ChangeNotifier {
   // Current user ID for filtering
   String? _currentUserId;
   bool _isManager = false;
+  UserProfile? _currentUserProfile;
 
   /// Set current user context for expense filtering
-  void setUserContext({required String userId, required bool isManager}) {
+  void setUserContext({required String userId, required bool isManager, UserProfile? userProfile}) {
     _currentUserId = userId;
     _isManager = isManager;
+    _currentUserProfile = userProfile;
   }
+
+  /// Current user profile
+  UserProfile? get currentUserProfile => _currentUserProfile;
 
   /// Fetch expenses with pagination and filters
   /// For employees, automatically filters to show only their own expenses
@@ -720,6 +725,129 @@ class ApiExpenseProvider extends ChangeNotifier {
         message: result.error?.toString() ?? 'Failed to return tasks',
       );
     }
+  }
+
+  // ============ Audit Log / Activity History ============
+
+  List<AuditLogDTO> _auditLogs = [];
+  PaginationMeta? _auditLogPagination;
+  bool _isLoadingAuditLog = false;
+
+  List<AuditLogDTO> get auditLogs => List.unmodifiable(_auditLogs);
+  PaginationMeta? get auditLogPagination => _auditLogPagination;
+  bool get isLoadingAuditLog => _isLoadingAuditLog;
+
+  // Keep old getters for compatibility
+  List<AuditLogDTO> get approvalHistory => _auditLogs;
+  PaginationMeta? get historyPagination => _auditLogPagination;
+  bool get isLoadingHistory => _isLoadingAuditLog;
+
+  /// Fetch audit log / activity history (for Team Activity screen)
+  Future<void> fetchAuditLog({
+    int page = 1,
+    String? action,
+    String? targetType,
+    bool append = false,
+  }) async {
+    if (_isLoadingAuditLog) return;
+
+    _isLoadingAuditLog = true;
+    if (!append) {
+      _auditLogs = [];
+    }
+    notifyListeners();
+
+    // Determine actorId filter: only filter for non-admin users
+    String? actorIdFilter;
+    if (_currentUserProfile != null && !_currentUserProfile!.isAdmin) {
+      actorIdFilter = _currentUserId;
+    }
+
+    final result = await _approvalService.getAuditLog(
+      page: page,
+      action: action,
+      targetType: targetType ?? 'expense', // Default to expense activities
+      actorId: actorIdFilter, // Filter by current user for non-admins
+    );
+
+    _isLoadingAuditLog = false;
+    if (result.isSuccess) {
+      final logs = result.data!.data;
+
+      // Enrich audit logs with expense details
+      await _enrichAuditLogsWithExpenseDetails(logs);
+
+      if (append) {
+        _auditLogs.addAll(logs);
+      } else {
+        _auditLogs = logs;
+      }
+      _auditLogPagination = result.data!.pagination;
+    } else {
+      _error = result.error?.toString();
+    }
+    notifyListeners();
+  }
+
+  /// Enrich audit logs with expense details (amount, merchant, etc.)
+  Future<void> _enrichAuditLogsWithExpenseDetails(List<AuditLogDTO> logs) async {
+    // Get unique expense IDs
+    final expenseIds = logs
+        .where((log) => log.targetType == 'expense' && log.targetId.isNotEmpty)
+        .map((log) => log.targetId)
+        .toSet()
+        .toList();
+
+    if (expenseIds.isEmpty) return;
+
+    // Fetch expense details in parallel (max 5 at a time to avoid overwhelming the server)
+    final Map<String, ExpenseDTO> expenseCache = {};
+    final Set<String> failedIds = {}; // Track IDs that failed (403, etc.)
+
+    for (var i = 0; i < expenseIds.length; i += 5) {
+      final batch = expenseIds.skip(i).take(5).toList();
+      final futures = batch.map((id) async {
+        try {
+          final result = await _expenseService.getExpense(id);
+          if (result.isSuccess && result.data != null) {
+            return MapEntry(id, result.data!);
+          } else {
+            // API returned error (403, 404, etc.)
+            failedIds.add(id);
+          }
+        } catch (e) {
+          // Exception during fetch (403, 404, etc.)
+          failedIds.add(id);
+          print('Could not fetch expense $id: $e');
+        }
+        return null;
+      });
+
+      final results = await Future.wait(futures);
+      for (final entry in results) {
+        if (entry != null) {
+          expenseCache[entry.key] = entry.value;
+        }
+      }
+    }
+
+    // Update audit logs with expense details or mark as no permission
+    for (final log in logs) {
+      if (log.targetType == 'expense') {
+        if (expenseCache.containsKey(log.targetId)) {
+          final expense = expenseCache[log.targetId]!;
+          log.enrichWithExpense(expense);
+        } else if (failedIds.contains(log.targetId)) {
+          // Mark as no permission if fetch failed
+          log.markNoPermission();
+        }
+      }
+    }
+  }
+
+  /// Alias for backward compatibility
+  Future<void> fetchApprovalHistory({int page = 1, String? action, bool append = false}) async {
+    await fetchAuditLog(page: page, action: action, append: append);
   }
 
   // ============ Reference Data ============

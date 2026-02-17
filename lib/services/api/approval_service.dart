@@ -168,4 +168,92 @@ class ApprovalService {
     }
     return ApiResult.failure(result.error!);
   }
+
+  /// Get approval history for a specific target (expense, transaction, cash_advance)
+  Future<ApiResult<PaginatedResult<ApprovalHistoryDTO>>> getHistory({
+    required String targetType,
+    required String targetId,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '/api/v1/approvals/history',
+        queryParameters: {
+          'target_type': targetType,
+          'target_id': targetId,
+        },
+      );
+
+      final data = response.data;
+      final historyData = data['history'] ?? data['data'] ?? [];
+      final items = (historyData as List<dynamic>)
+          .map((e) => ApprovalHistoryDTO.fromJson(e))
+          .toList();
+
+      return ApiResult.success(PaginatedResult(
+        data: items,
+        pagination: PaginationMeta(
+          page: 1,
+          pageSize: items.length,
+          totalCount: items.length,
+          totalPages: 1,
+          hasNext: false,
+          hasPrev: false,
+        ),
+      ));
+    } on DioException catch (e) {
+      return ApiResult.fromDioError(e);
+    }
+  }
+
+  /// Get audit log / activity history (for Team Activity screen)
+  Future<ApiResult<PaginatedResult<AuditLogDTO>>> getAuditLog({
+    int page = 1,
+    int pageSize = 20,
+    String? action,
+    String? targetType,
+    String? actorId,
+    String? startDate,
+    String? endDate,
+  }) async {
+    try {
+      final queryParams = <String, dynamic>{
+        'page': page,
+        'page_size': pageSize,
+      };
+      if (action != null) queryParams['action'] = action;
+      if (targetType != null) queryParams['target_type'] = targetType;
+      if (actorId != null) queryParams['actor_id'] = actorId;
+      if (startDate != null) queryParams['start_date'] = startDate;
+      if (endDate != null) queryParams['end_date'] = endDate;
+
+      final response = await _dio.get(
+        '/reports/audit-log',
+        queryParameters: queryParams,
+      );
+
+      final data = response.data;
+      final logsData = data['auditLogs'] ?? data['audit_logs'] ?? data['data'] ?? [];
+      final items = (logsData as List<dynamic>)
+          .map((e) => AuditLogDTO.fromJson(e))
+          .toList();
+
+      final total = data['totalEntries'] ?? data['total_entries'] ?? items.length;
+      final totalPagesCalc = (total / pageSize).ceil();
+      final pagination = PaginationMeta(
+        page: page,
+        pageSize: pageSize,
+        totalCount: total,
+        totalPages: totalPagesCalc > 0 ? totalPagesCalc : 1,
+        hasNext: page < totalPagesCalc,
+        hasPrev: page > 1,
+      );
+
+      return ApiResult.success(PaginatedResult(
+        data: items,
+        pagination: pagination,
+      ));
+    } on DioException catch (e) {
+      return ApiResult.fromDioError(e);
+    }
+  }
 }

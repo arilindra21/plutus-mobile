@@ -106,6 +106,26 @@ class UserProfile {
   /// Check if user is an Employee/Staff
   bool get isEmployee => jobLevel < 3;
 
+  /// Check if user is an Admin
+  /// Admin has role 'admin' or high job level (5+) or specific admin permissions
+  bool get isAdmin {
+    // Check roles for admin
+    if (roles.any((r) => r.name.toLowerCase() == 'admin')) {
+      return true;
+    }
+    // Check permissions for admin privileges
+    if (permissions.contains('admin:*') ||
+        permissions.contains('user:*') ||
+        permissions.contains('audit:*')) {
+      return true;
+    }
+    // High job level (VP/Director level) can see all audit logs
+    if (jobLevel >= 5) {
+      return true;
+    }
+    return false;
+  }
+
   /// Determine navigation type based on permissions
   String get navType => canApprove ? 'approver' : 'spender';
 

@@ -302,22 +302,33 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
                 const SizedBox(height: AppSpacing.sm),
                 Row(
                   children: [
-                    Text(
-                      refId,
-                      style: AppTypography.caption.copyWith(
-                        color: AppColors.textSecondary,
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.sm,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        borderRadius: AppRadius.borderRadiusSm,
+                      ),
+                      child: Text(
+                        refId,
+                        style: AppTypography.caption.copyWith(
+                          color: Colors.white.withOpacity(0.9),
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
+                        ),
                       ),
                     ),
                     const SizedBox(width: AppSpacing.sm),
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.sm,
-                        vertical: 2,
+                        vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.bgSubtle,
+                        color: Colors.white,
                         borderRadius: AppRadius.borderRadiusFull,
-                        border: Border.all(color: AppColors.borderDefault),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -327,7 +338,8 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
                           Text(
                             'Ready',
                             style: AppTypography.caption.copyWith(
-                              color: AppColors.textSecondary,
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
@@ -351,7 +363,8 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
     }
 
     return Container(
-      margin: const EdgeInsets.all(AppSpacing.lg),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.md),
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         gradient: AppColors.cardGradient,

@@ -45,6 +45,7 @@ class _ReviewApproveScreenState extends State<ReviewApproveScreen> {
       apiProvider.setUserContext(
         userId: authProvider.user!.id,
         isManager: authProvider.user!.isManager,
+        userProfile: authProvider.user,
       );
     }
 
