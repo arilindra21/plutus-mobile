@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../core/design_tokens.dart';
 import '../../providers/app_provider.dart';
 import '../../providers/api_expense_provider.dart';
@@ -40,6 +42,8 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     {'value': 'petty_cash', 'label': 'Petty Cash', 'icon': CupertinoIcons.money_dollar_circle_fill},
     {'value': 'cash_advance', 'label': 'Advance', 'icon': CupertinoIcons.arrow_right_circle_fill},
   ];
+
+  final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
@@ -210,7 +214,15 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                                   : null,
                             ),
 
-                            const SizedBox(height: 32),
+                            const SizedBox(height: 24),
+
+                            // Attachments (only for new expense, not editing)
+                            if (!_isEditing) ...[
+                              _buildSectionTitle('Attachments', CupertinoIcons.paperclip),
+                              const SizedBox(height: 12),
+                              _buildAttachmentSection(),
+                              const SizedBox(height: 8),
+                            ],
 
                             // Action Buttons
                             _buildActionButtons(),
@@ -1114,6 +1126,170 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     );
   }
 
+  Widget _buildAttachmentSection() {
+    return Consumer<ApiExpenseProvider>(
+      builder: (context, apiProvider, _) {
+        final attachments = apiProvider.pendingAttachments;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Attachment list
+            if (attachments.isNotEmpty) ...[
+              ...attachments.asMap().entries.map((entry) {
+                final index = entry.key;
+                final file = entry.value;
+                final fileName = file.path.split('/').last.split('\\').last;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.bgSubtle,
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: FintechColors.primary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                        child: Icon(
+                          CupertinoIcons.doc_fill,
+                          color: FintechColors.primary,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              fileName,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.textPrimary,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Ready to upload',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => apiProvider.removePendingAttachment(index),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          child: Icon(
+                            CupertinoIcons.xmark_circle_fill,
+                            color: AppColors.textMuted,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+
+            // Add attachment buttons
+            Row(
+              children: [
+                Expanded(
+                  child: _buildAttachButton(
+                    icon: CupertinoIcons.camera_fill,
+                    label: 'Camera',
+                    onTap: () => _pickImage(ImageSource.camera, apiProvider),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildAttachButton(
+                    icon: CupertinoIcons.photo_fill,
+                    label: 'Gallery',
+                    onTap: () => _pickImage(ImageSource.gallery, apiProvider),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildAttachButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: AppColors.bgSubtle,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(color: AppColors.border, style: BorderStyle.solid),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: FintechColors.primary, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: FintechColors.primary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickImage(ImageSource source, ApiExpenseProvider apiProvider) async {
+    try {
+      final XFile? pickedFile = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 85,
+      );
+
+      if (pickedFile != null) {
+        final file = File(pickedFile.path);
+        apiProvider.addPendingAttachment(file);
+      }
+    } catch (e) {
+      if (mounted) {
+        context.read<AppProvider>().showNotification(
+          'Failed to pick image: $e',
+          type: 'error',
+        );
+      }
+    }
+  }
+
   Widget _buildPrimaryButton({
     required String label,
     required IconData icon,
@@ -1255,6 +1431,8 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         );
       }
     } else {
+      // Workaround: Always create as draft first, then submit separately if needed
+      // This is because API errors when creating with submitForApproval=true
       result = await apiProvider.createExpense(
         amount: amount,
         categoryId: categoryId,
@@ -1265,10 +1443,11 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         departmentId: _selectedDepartmentId,
         costCenterId: _selectedCostCenterId,
         merchantName: merchantName,
-        submitForApproval: _submitForApproval,
+        submitForApproval: false, // Always create as draft first
       );
 
       if (result != null) {
+        // Upload attachments first
         final pendingAttachments = apiProvider.pendingAttachments;
         if (pendingAttachments.isNotEmpty) {
           for (final file in pendingAttachments) {
@@ -1279,7 +1458,25 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
           apiProvider.clearPendingAttachments();
         }
 
-        apiProvider.setSelectedExpense(result);
+        // If user wants to submit for approval, call submit API separately
+        if (_submitForApproval) {
+          final submitSuccess = await apiProvider.submitExpense(result.id);
+          if (submitSuccess) {
+            // submitExpense already updates selectedExpense with the new status
+            result = apiProvider.selectedExpense;
+          } else {
+            // Submit failed, but expense was created as draft
+            appProvider.showNotification(
+              'Expense saved as draft. Submit failed: ${apiProvider.error ?? "Unknown error"}',
+              type: 'warning',
+            );
+            apiProvider.setSelectedExpense(result);
+            appProvider.navigateTo('expenseCreated');
+            return;
+          }
+        } else {
+          apiProvider.setSelectedExpense(result);
+        }
 
         appProvider.showNotification(
           _submitForApproval

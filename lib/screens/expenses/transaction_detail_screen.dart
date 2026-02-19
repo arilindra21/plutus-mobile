@@ -82,7 +82,8 @@ class TransactionDetailScreen extends StatelessWidget {
                       children: [
                         if (isRejected) _buildRejectedBanner(context, expense.statusReason),
                         if (isReturned) _buildReturnedBanner(context, expense.statusReason),
-                        if (expense.missingReceipt) _buildMissingReceiptBanner(context, expense.id),
+                        // Only show Missing Receipt banner if user can actually attach
+                        if (expense.missingReceipt && canEdit) _buildMissingReceiptBanner(context, expense.id, canAttach: true),
                         _buildRequesterSection(context, apiProvider, expense),
                         const SizedBox(height: 16),
                         _buildMainCard(
@@ -213,7 +214,7 @@ class TransactionDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildMissingReceiptBanner(BuildContext context, String expenseId) {
+  Widget _buildMissingReceiptBanner(BuildContext context, String expenseId, {bool canAttach = false}) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
@@ -241,8 +242,8 @@ class TransactionDetailScreen extends StatelessWidget {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text(
+              children: [
+                const Text(
                   'Receipt Required',
                   style: TextStyle(
                     fontSize: 15,
@@ -250,10 +251,12 @@ class TransactionDetailScreen extends StatelessWidget {
                     color: AppColors.textPrimary,
                   ),
                 ),
-                SizedBox(height: 2),
+                const SizedBox(height: 2),
                 Text(
-                  'Please attach a receipt for this expense',
-                  style: TextStyle(
+                  canAttach
+                      ? 'Please attach a receipt for this expense'
+                      : 'Receipt is missing. Edit this expense to attach.',
+                  style: const TextStyle(
                     fontSize: 13,
                     color: AppColors.textSecondary,
                   ),
@@ -261,29 +264,30 @@ class TransactionDetailScreen extends StatelessWidget {
               ],
             ),
           ),
-          GestureDetector(
-            onTap: () {
-              context.read<AppProvider>().navigateToWithParams('camera', {
-                'mode': 'attach',
-                'expenseId': expenseId,
-              });
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: FintechColors.categoryOrange,
-                borderRadius: BorderRadius.circular(AppRadius.sm),
-              ),
-              child: const Text(
-                'Attach',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
+          if (canAttach)
+            GestureDetector(
+              onTap: () {
+                context.read<AppProvider>().navigateToWithParams('camera', {
+                  'mode': 'attach',
+                  'expenseId': expenseId,
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: FintechColors.categoryOrange,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                child: const Text(
+                  'Attach',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );

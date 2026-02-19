@@ -66,9 +66,8 @@ class _ApproverExpenseDetailScreenState extends State<ApproverExpenseDetailScree
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _buildSubmitterInfo(task, expense),
-                      // Missing Receipt Banner
-                      if (expense != null && expense.missingReceipt)
-                        _buildMissingReceiptBanner(),
+                      // Note: Missing Receipt Banner removed - approvers cannot attach receipts
+                      // Only the expense owner can see and act on missing receipt warnings
                       _buildAmountCard(task, expense),
                       _buildExpenseDetails(task, expense, context.read<ApiExpenseProvider>()),
                       // Receipts Section
@@ -491,18 +490,8 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
     );
   }
 
-  Widget _buildMissingReceiptBanner() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, AppSpacing.lg, 0),
-      child: AlertBanner(
-        icon: CupertinoIcons.exclamationmark_triangle_fill,
-        iconColor: AppColors.warning,
-        backgroundColor: AppColors.warning.withOpacity(0.1),
-        title: 'Missing Receipt',
-        subtitle: 'This expense is missing a receipt attachment.',
-      ),
-    );
-  }
+  // Note: _buildMissingReceiptBanner removed - approvers cannot attach receipts
+  // Only expense owners can see and act on missing receipt warnings
 
   Widget _buildReceiptsSection(ExpenseDTO expense) {
     final receipts = expense.receipts;

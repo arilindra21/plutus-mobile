@@ -93,7 +93,7 @@ class ExpenseCreatedScreen extends StatelessWidget {
                   const SizedBox(height: AppSpacing.xxxl),
 
                   if (latestExpense != null) ...[
-                    _buildDetailCard(latestExpense),
+                    _buildDetailCard(latestExpense, apiProvider),
                     const SizedBox(height: AppSpacing.lg),
                     if (latestExpense.missingReceipt)
                       _buildMissingReceiptWarning(),
@@ -133,7 +133,10 @@ class ExpenseCreatedScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDetailCard(ExpenseDTO expense) {
+  Widget _buildDetailCard(ExpenseDTO expense, ApiExpenseProvider apiProvider) {
+    // Lookup category name from provider's categories list
+    final categoryName = _getCategoryName(expense.categoryId, apiProvider.categories);
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -168,7 +171,7 @@ class ExpenseCreatedScreen extends StatelessWidget {
                         fontWeight: AppTypography.fontWeightSemibold,
                       ),
                     ),
-                    Text(expense.category, style: AppTypography.bodySmall),
+                    Text(categoryName, style: AppTypography.bodySmall),
                   ],
                 ),
               ),
@@ -181,10 +184,20 @@ class ExpenseCreatedScreen extends StatelessWidget {
 
           _DetailRow(label: 'Amount', value: formatRupiah(expense.originalAmount)),
           _DetailRow(label: 'Date', value: expense.formattedDate),
-          _DetailRow(label: 'Status', value: expense.statusName ?? _getStatusLabel(expense.status)),
+          _DetailRow(label: 'Status', value: _getStatusLabel(expense.status)),
         ],
       ),
     );
+  }
+
+  String _getCategoryName(String? categoryId, List<CategoryDTO> categories) {
+    if (categoryId == null || categoryId.isEmpty) return 'Uncategorized';
+    try {
+      final category = categories.firstWhere((c) => c.id == categoryId);
+      return category.name;
+    } catch (_) {
+      return 'Uncategorized';
+    }
   }
 
   Widget _buildMissingReceiptWarning() {
