@@ -6,6 +6,7 @@ import 'providers/app_provider.dart';
 import 'providers/auth_provider.dart';
 import 'providers/api_expense_provider.dart';
 import 'providers/api_transaction_provider.dart';
+import 'providers/notification_provider.dart';
 
 // Auth screens
 import 'screens/auth/api_login_screen.dart';
@@ -59,6 +60,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => ApiExpenseProvider()),
         ChangeNotifierProvider(create: (_) => ApiTransactionProvider()),
+        ChangeNotifierProvider(create: (_) => NotificationProvider()),
       ],
       child: MaterialApp(
         title: 'Mobile Expense App',
@@ -212,10 +214,17 @@ class _AppRouterState extends State<AppRouter> {
   void _checkAuthState() {
     final authProvider = context.read<AuthProvider>();
     final appProvider = context.read<AppProvider>();
+    final notificationProvider = context.read<NotificationProvider>();
 
-    // If already authenticated, update AppProvider
+    // If already authenticated, update AppProvider and start notification polling
     if (authProvider.isAuthenticated && authProvider.user != null) {
       appProvider.loginWithApi(authProvider.user!);
+
+      // Start notification polling
+      notificationProvider.startPolling(
+        isApprover: authProvider.user!.canApprove,
+        userId: authProvider.user!.id,
+      );
     }
     setState(() => _initialized = true);
 
@@ -226,14 +235,22 @@ class _AppRouterState extends State<AppRouter> {
   void _onAuthStateChange() {
     final authProvider = context.read<AuthProvider>();
     final appProvider = context.read<AppProvider>();
+    final notificationProvider = context.read<NotificationProvider>();
 
     if (authProvider.isAuthenticated && authProvider.user != null) {
       // Only update if not already on a valid screen
       if (appProvider.currentScreen == 'login') {
         appProvider.loginWithApi(authProvider.user!);
+
+        // Start notification polling
+        notificationProvider.startPolling(
+          isApprover: authProvider.user!.canApprove,
+          userId: authProvider.user!.id,
+        );
       }
     } else if (authProvider.status == AuthStatus.unauthenticated) {
       appProvider.logout();
+      notificationProvider.stopPolling();
     }
   }
 

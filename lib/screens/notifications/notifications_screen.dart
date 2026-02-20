@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
 import '../../providers/api_expense_provider.dart';
+import '../../providers/notification_provider.dart';
 import '../../models/notification.dart';
 import '../../widgets/layout/bottom_navigation.dart';
 
@@ -26,9 +27,9 @@ class NotificationsScreen extends StatelessWidget {
   }
 
   Widget _buildHeader(BuildContext context) {
-    return Consumer<AppProvider>(
-      builder: (context, appProvider, _) {
-        final unreadCount = appProvider.notifications.where((n) => !n.read).length;
+    return Consumer<NotificationProvider>(
+      builder: (context, notificationProvider, _) {
+        final unreadCount = notificationProvider.unreadCount;
 
         return Container(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
@@ -61,9 +62,23 @@ class NotificationsScreen extends StatelessWidget {
                 ),
               ],
               const Spacer(),
+              // Refresh button
+              GestureDetector(
+                onTap: () => notificationProvider.refresh(),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  child: Icon(
+                    CupertinoIcons.refresh,
+                    size: 20,
+                    color: notificationProvider.isPolling
+                        ? const Color(0xFF007AFF)
+                        : Colors.grey,
+                  ),
+                ),
+              ),
               if (unreadCount > 0)
                 GestureDetector(
-                  onTap: () => appProvider.markAllNotificationsRead(),
+                  onTap: () => notificationProvider.markAllAsRead(),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
@@ -88,9 +103,9 @@ class NotificationsScreen extends StatelessWidget {
   }
 
   Widget _buildNotificationList(BuildContext context) {
-    return Consumer<AppProvider>(
-      builder: (context, appProvider, _) {
-        final notifications = appProvider.notifications;
+    return Consumer<NotificationProvider>(
+      builder: (context, notificationProvider, _) {
+        final notifications = notificationProvider.notifications;
 
         if (notifications.isEmpty) {
           return Center(
@@ -199,20 +214,81 @@ class NotificationsScreen extends StatelessWidget {
 
   void _handleNotificationTap(BuildContext context, AppNotification notification) {
     final appProvider = context.read<AppProvider>();
-    appProvider.markNotificationRead(notification.id);
+    final notificationProvider = context.read<NotificationProvider>();
+    final apiExpenseProvider = context.read<ApiExpenseProvider>();
 
-    // Navigate based on notification type
-    if (notification.expenseId != null) {
-      final apiExpenseProvider = context.read<ApiExpenseProvider>();
-      try {
-        final expense = apiExpenseProvider.expenses.firstWhere(
-          (exp) => exp.id == notification.expenseId,
+    // Mark as read
+    notificationProvider.markAsRead(notification.id);
+
+    // Navigate based on notification action
+    if (notification.action != null) {
+      final screen = notification.action!.screen;
+      final params = notification.action!.params;
+
+      // Handle approval task navigation
+      if (screen == 'approverExpenseDetail' && params != null) {
+        final taskId = params['taskId'] as String?;
+        final expenseId = params['expenseId'] as String?;
+
+        if (taskId != null) {
+          // Try to find task in approval tasks list
+          final task = apiExpenseProvider.approvalTasks.cast<dynamic>().firstWhere(
+            (t) => t.id == taskId,
+            orElse: () => null,
+          );
+
+          if (task != null) {
+            apiExpenseProvider.setSelectedApprovalTask(task);
+            appProvider.navigateTo('approverExpenseDetail');
+          } else if (expenseId != null) {
+            // Task not in list, try to fetch the expense directly
+            _fetchAndNavigateToExpense(context, expenseId, isApprover: true);
+          }
+        }
+      } else if (screen == 'transactionDetail' && params != null) {
+        final expenseId = params['expenseId'] as String?;
+        if (expenseId != null) {
+          _fetchAndNavigateToExpense(context, expenseId, isApprover: false);
+        }
+      } else {
+        // Default navigation
+        if (params != null) {
+          appProvider.navigateToWithParams(screen, params);
+        } else {
+          appProvider.navigateTo(screen);
+        }
+      }
+    }
+  }
+
+  Future<void> _fetchAndNavigateToExpense(
+    BuildContext context,
+    String expenseId, {
+    required bool isApprover,
+  }) async {
+    final appProvider = context.read<AppProvider>();
+    final apiExpenseProvider = context.read<ApiExpenseProvider>();
+
+    // Try to find in existing expenses first
+    final existingExpense = apiExpenseProvider.expenses.cast<dynamic>().firstWhere(
+      (e) => e.id == expenseId,
+      orElse: () => null,
+    );
+
+    if (existingExpense != null) {
+      apiExpenseProvider.setSelectedExpense(existingExpense);
+      appProvider.navigateTo(isApprover ? 'approverExpenseDetail' : 'transactionDetail');
+    } else {
+      // Fetch from API
+      final expense = await apiExpenseProvider.getExpense(expenseId);
+      if (expense != null) {
+        appProvider.navigateTo(isApprover ? 'approverExpenseDetail' : 'transactionDetail');
+      } else {
+        // Show error
+        appProvider.showNotification(
+          'Could not load expense details',
+          type: 'error',
         );
-        apiExpenseProvider.setSelectedExpense(expense);
-        appProvider.navigateTo('transactionDetail');
-      } catch (e) {
-        // Expense not found in current list
-        // Could fetch it from API or show an error
       }
     }
   }

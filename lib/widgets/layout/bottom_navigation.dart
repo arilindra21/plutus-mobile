@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
+import '../../providers/notification_provider.dart';
 import '../../core/design_tokens.dart';
 
 void _showAddExpenseSheet(BuildContext context) {
@@ -53,12 +54,15 @@ class AppBottomNavigation extends StatelessWidget {
 
                   // Review (Manager) or Expenses (Employee)
                   if (isManager)
-                    _NavItem(
-                      icon: CupertinoIcons.checkmark_seal,
-                      activeIcon: CupertinoIcons.checkmark_seal_fill,
-                      label: 'Review',
-                      isActive: currentScreen == 'reviewApprove',
-                      onTap: () => appProvider.navigateToTab('reviewApprove'),
+                    Consumer<NotificationProvider>(
+                      builder: (context, notificationProvider, _) => _NavItem(
+                        icon: CupertinoIcons.checkmark_seal,
+                        activeIcon: CupertinoIcons.checkmark_seal_fill,
+                        label: 'Review',
+                        isActive: currentScreen == 'reviewApprove',
+                        badge: notificationProvider.pendingApprovalCount,
+                        onTap: () => appProvider.navigateToTab('reviewApprove'),
+                      ),
                     )
                   else
                     _NavItem(
@@ -84,12 +88,15 @@ class AppBottomNavigation extends StatelessWidget {
                       onTap: () => appProvider.navigateToTab('budgetOverview'),
                     )
                   else
-                    _NavItem(
-                      icon: CupertinoIcons.bell,
-                      activeIcon: CupertinoIcons.bell_fill,
-                      label: 'Alert',
-                      isActive: currentScreen == 'notifications' || currentScreen == 'alerts',
-                      onTap: () => appProvider.navigateToTab('notifications'),
+                    Consumer<NotificationProvider>(
+                      builder: (context, notificationProvider, _) => _NavItem(
+                        icon: CupertinoIcons.bell,
+                        activeIcon: CupertinoIcons.bell_fill,
+                        label: 'Alert',
+                        isActive: currentScreen == 'notifications' || currentScreen == 'alerts',
+                        badge: notificationProvider.unreadCount,
+                        onTap: () => appProvider.navigateToTab('notifications'),
+                      ),
                     ),
 
                   // History
