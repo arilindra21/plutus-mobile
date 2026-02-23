@@ -8,8 +8,36 @@ import '../../utils/formatters.dart';
 import '../../core/design_tokens.dart';
 import '../../widgets/fintech/fintech_widgets.dart';
 
-class TransactionDetailScreen extends StatelessWidget {
+class TransactionDetailScreen extends StatefulWidget {
   const TransactionDetailScreen({super.key});
+
+  @override
+  State<TransactionDetailScreen> createState() => _TransactionDetailScreenState();
+}
+
+class _TransactionDetailScreenState extends State<TransactionDetailScreen> {
+  bool _isLoadingDetail = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Fetch full expense detail to get statusReason and other fields
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _fetchExpenseDetail();
+    });
+  }
+
+  Future<void> _fetchExpenseDetail() async {
+    final apiProvider = context.read<ApiExpenseProvider>();
+    final expense = apiProvider.selectedExpense;
+
+    if (expense != null) {
+      setState(() => _isLoadingDetail = true);
+      print('DEBUG: Fetching expense detail for ${expense.id}');
+      await apiProvider.getExpense(expense.id);
+      setState(() => _isLoadingDetail = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -80,6 +108,13 @@ class TransactionDetailScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Debug logging
+                        if (isRejected || isReturned) Builder(
+                          builder: (context) {
+                            print('DEBUG Expense Detail: status=${expense.status}, statusReason="${expense.statusReason}"');
+                            return const SizedBox.shrink();
+                          },
+                        ),
                         if (isRejected) _buildRejectedBanner(context, expense.statusReason),
                         if (isReturned) _buildReturnedBanner(context, expense.statusReason),
                         // Only show Missing Receipt banner if user can actually attach
