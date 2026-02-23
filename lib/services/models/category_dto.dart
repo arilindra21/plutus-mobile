@@ -138,46 +138,88 @@ class CostCenterDTO {
   }
 }
 
-/// Vendor/Merchant DTO
+/// Vendor/Merchant DTO - matches backend /api/v1/vendors
 class VendorDTO {
   final String id;
+  final String? organizationId;
+  final String? externalId;
   final String name;
-  final String? code;
-  final String? category;
-  final String? address;
-  final String? phone;
-  final String? email;
-  final String? taxId;
-  final bool isActive;
+  final String? normalizedName;
+  final String? merchantCategoryId;
+  final String? expenseCategoryId;
+  final bool isBlocked;
+  final String? blockReason;
+  final DateTime? blockedAt;
+  final String? blockedBy;
+  final Map<String, dynamic>? metadata;
   final DateTime createdAt;
+  final DateTime updatedAt;
 
   VendorDTO({
     required this.id,
+    this.organizationId,
+    this.externalId,
     required this.name,
-    this.code,
-    this.category,
-    this.address,
-    this.phone,
-    this.email,
-    this.taxId,
-    this.isActive = true,
+    this.normalizedName,
+    this.merchantCategoryId,
+    this.expenseCategoryId,
+    this.isBlocked = false,
+    this.blockReason,
+    this.blockedAt,
+    this.blockedBy,
+    this.metadata,
     required this.createdAt,
+    required this.updatedAt,
   });
 
   factory VendorDTO.fromJson(Map<String, dynamic> json) {
     return VendorDTO(
       id: json['id'] ?? '',
+      organizationId: json['organizationId'],
+      externalId: json['externalId'],
       name: json['name'] ?? '',
-      code: json['code'],
-      category: json['category'],
-      address: json['address'],
-      phone: json['phone'],
-      email: json['email'],
-      taxId: json['taxId'],
-      isActive: json['isActive'] ?? true,
+      normalizedName: json['normalizedName'],
+      merchantCategoryId: json['merchantCategoryId'],
+      expenseCategoryId: json['expenseCategoryId'],
+      isBlocked: json['isBlocked'] ?? false,
+      blockReason: json['blockReason'],
+      blockedAt: json['blockedAt'] != null
+          ? DateTime.tryParse(json['blockedAt'])
+          : null,
+      blockedBy: json['blockedBy'],
+      metadata: json['metadata'],
       createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
+      updatedAt: DateTime.tryParse(json['updatedAt'] ?? '') ?? DateTime.now(),
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'organizationId': organizationId,
+      'externalId': externalId,
+      'name': name,
+      'normalizedName': normalizedName,
+      'merchantCategoryId': merchantCategoryId,
+      'expenseCategoryId': expenseCategoryId,
+      'isBlocked': isBlocked,
+      'blockReason': blockReason,
+      'blockedAt': blockedAt?.toIso8601String(),
+      'blockedBy': blockedBy,
+      'metadata': metadata,
+    };
+  }
+
+  /// Display name with external ID if available
+  String get displayName {
+    if (externalId != null && externalId!.isNotEmpty) {
+      return '$name ($externalId)';
+    }
+    return name;
+  }
+
+  /// Check if vendor is global (no organization ID)
+  bool get isGlobal => organizationId == null;
 }
 
 /// Budget DTO

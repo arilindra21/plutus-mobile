@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/design_tokens.dart';
 import '../../providers/app_provider.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/api_expense_provider.dart';
 import '../../services/services.dart';
 import '../../constants/categories.dart';
@@ -19,13 +20,13 @@ class NewExpenseScreen extends StatefulWidget {
 
 class _NewExpenseScreenState extends State<NewExpenseScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _merchantController = TextEditingController();
   final _amountController = TextEditingController();
   final _notesController = TextEditingController();
 
   String? _selectedCategoryId;
   String? _selectedDepartmentId;
   String? _selectedCostCenterId;
+  String? _selectedVendorId;
   String _selectedCurrency = 'IDR';
   String _selectedExpenseType = 'reimbursement';
   bool _submitForApproval = false;
@@ -65,34 +66,37 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
   void _loadEditingData() {
     final apiProvider = context.read<ApiExpenseProvider>();
+    final authProvider = context.read<AuthProvider>();
     final expense = apiProvider.selectedExpense;
 
     if (expense != null && (expense.status == 0 || expense.status == 7)) {
       setState(() {
         _isEditing = true;
         _editingApiId = expense.id;
-        _merchantController.text = expense.merchant;
         _amountController.text = expense.originalAmount.toStringAsFixed(0);
         _selectedCategoryId = expense.categoryId;
         _selectedDepartmentId = expense.departmentId;
         _selectedCostCenterId = expense.costCenterId;
+        _selectedVendorId = expense.vendorId;
         _selectedCurrency = expense.originalCurrency;
         _selectedExpenseType = expense.expenseType.isNotEmpty ? expense.expenseType : 'reimbursement';
         _notesController.text = expense.description ?? '';
         _selectedDate = expense.expenseDate;
       });
     } else {
-      if (apiProvider.categories.isNotEmpty) {
-        setState(() {
+      // For new expense, auto-fill department from user profile
+      setState(() {
+        if (apiProvider.categories.isNotEmpty) {
           _selectedCategoryId = apiProvider.categories.first.id;
-        });
-      }
+        }
+        // Auto-fill department from user's profile
+        _selectedDepartmentId = authProvider.user?.departmentId;
+      });
     }
   }
 
   @override
   void dispose() {
-    _merchantController.dispose();
     _amountController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -126,20 +130,10 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Merchant
+                            // Vendor
                             _buildSectionTitle('Merchant / Vendor', CupertinoIcons.building_2_fill),
                             const SizedBox(height: 12),
-                            _buildModernTextField(
-                              controller: _merchantController,
-                              hint: 'Where did you spend?',
-                              icon: CupertinoIcons.bag_fill,
-                              validator: (value) {
-                                if (value == null || value.isEmpty) {
-                                  return 'Please enter merchant name';
-                                }
-                                return null;
-                              },
-                            ),
+                            _buildVendorSelector(),
 
                             const SizedBox(height: 24),
 
@@ -164,7 +158,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
                             const SizedBox(height: 24),
 
-                            // Department & Cost Center Row
+                            // Department (read-only from user profile) & Cost Center Row
                             Row(
                               children: [
                                 Expanded(
@@ -173,7 +167,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                                     children: [
                                       _buildSectionTitle('Department', CupertinoIcons.person_2_fill, small: true),
                                       const SizedBox(height: 8),
-                                      _buildDepartmentDropdown(),
+                                      _buildDepartmentDisplay(),
                                     ],
                                   ),
                                 ),
@@ -805,6 +799,335 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     );
   }
 
+  Widget _buildVendorSelector() {
+    return Consumer<ApiExpenseProvider>(
+      builder: (context, apiProvider, _) {
+        final vendors = apiProvider.vendors;
+
+        if (vendors.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              boxShadow: AppShadows.card,
+            ),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CupertinoActivityIndicator(),
+                ),
+                const SizedBox(width: 12),
+                Text('Loading vendors...', style: TextStyle(color: AppColors.textMuted)),
+              ],
+            ),
+          );
+        }
+
+        final selectedVendor = _selectedVendorId != null
+            ? vendors.where((v) => v.id == _selectedVendorId).firstOrNull
+            : null;
+
+        return GestureDetector(
+          onTap: () => _showVendorPicker(vendors),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              boxShadow: AppShadows.card,
+              border: _selectedVendorId == null
+                  ? Border.all(color: AppColors.statusRejected.withValues(alpha: 0.5), width: 1)
+                  : null,
+            ),
+            child: Row(
+              children: [
+                // Vendor icon
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: FintechColors.categoryBlueBg,
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                  child: Icon(
+                    CupertinoIcons.building_2_fill,
+                    color: FintechColors.categoryBlue,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Select Vendor',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        selectedVendor?.name ?? 'Tap to select vendor',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: selectedVendor != null ? FontWeight.w600 : FontWeight.w400,
+                          color: selectedVendor != null ? AppColors.textPrimary : AppColors.textMuted,
+                        ),
+                      ),
+                      if (selectedVendor?.externalId != null && selectedVendor!.externalId!.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          selectedVendor.externalId!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(
+                  CupertinoIcons.chevron_right,
+                  size: 18,
+                  color: AppColors.textMuted,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showVendorPicker(List<VendorDTO> vendors) {
+    // Filter out blocked vendors
+    final activeVendors = vendors.where((v) => !v.isBlocked).toList();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Select Vendor',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => Navigator.pop(ctx),
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: AppColors.bgSubtle,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(CupertinoIcons.xmark, size: 16, color: AppColors.textMuted),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Info banner
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: FintechColors.categoryBlueBg,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      CupertinoIcons.info_circle_fill,
+                      color: FintechColors.categoryBlue,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '${activeVendors.length} vendors available',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: FintechColors.categoryBlue,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                itemCount: activeVendors.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final vendor = activeVendors[index];
+                  final isSelected = vendor.id == _selectedVendorId;
+                  final isGlobal = vendor.isGlobal;
+
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() => _selectedVendorId = vendor.id);
+                      Navigator.pop(ctx);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: isSelected ? FintechColors.primary.withValues(alpha: 0.1) : AppColors.bgSubtle,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        border: isSelected ? Border.all(color: FintechColors.primary, width: 2) : null,
+                      ),
+                      child: Row(
+                        children: [
+                          // Vendor icon with global indicator
+                          Stack(
+                            children: [
+                              Container(
+                                width: 44,
+                                height: 44,
+                                decoration: BoxDecoration(
+                                  color: isGlobal ? FintechColors.categoryGreenBg : FintechColors.categoryBlueBg,
+                                  borderRadius: BorderRadius.circular(AppRadius.md),
+                                ),
+                                child: Icon(
+                                  CupertinoIcons.building_2_fill,
+                                  color: isGlobal ? FintechColors.categoryGreen : FintechColors.categoryBlue,
+                                  size: 22,
+                                ),
+                              ),
+                              if (isGlobal)
+                                Positioned(
+                                  right: -2,
+                                  bottom: -2,
+                                  child: Container(
+                                    width: 16,
+                                    height: 16,
+                                    decoration: BoxDecoration(
+                                      color: FintechColors.categoryGreen,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 2),
+                                    ),
+                                    child: const Icon(
+                                      CupertinoIcons.globe,
+                                      color: Colors.white,
+                                      size: 8,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        vendor.name,
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                          color: AppColors.textPrimary,
+                                        ),
+                                      ),
+                                    ),
+                                    if (isGlobal)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: FintechColors.categoryGreenBg,
+                                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                                        ),
+                                        child: Text(
+                                          'Global',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            color: FintechColors.categoryGreen,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                if (vendor.externalId != null && vendor.externalId!.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'ID: ${vendor.externalId}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.textMuted,
+                                    ),
+                                  ),
+                                ],
+                                if (vendor.normalizedName != null && vendor.normalizedName != vendor.name) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    vendor.normalizedName!,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.textMuted,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          if (isSelected)
+                            Icon(
+                              CupertinoIcons.checkmark_circle_fill,
+                              color: FintechColors.primary,
+                              size: 22,
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDateSelector() {
     return GestureDetector(
       onTap: () async {
@@ -893,42 +1216,66 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 
-  Widget _buildDepartmentDropdown() {
-    return Consumer<ApiExpenseProvider>(
-      builder: (context, apiProvider, _) {
-        final departments = apiProvider.departments;
-        final selectedDept = departments.where((d) => d.id == _selectedDepartmentId).firstOrNull;
+  /// Read-only department display from user profile
+  Widget _buildDepartmentDisplay() {
+    return Consumer2<AuthProvider, ApiExpenseProvider>(
+      builder: (context, authProvider, apiProvider, _) {
+        final user = authProvider.user;
+        final departmentId = user?.departmentId;
 
-        return GestureDetector(
-          onTap: () => _showSelectionSheet(
-            title: 'Select Department',
-            items: departments.map((d) => {'id': d.id, 'name': d.name}).toList(),
-            selectedId: _selectedDepartmentId,
-            onSelect: (id) => setState(() => _selectedDepartmentId = id),
+        // Debug logging
+        print('DEBUG: user departmentId = $departmentId');
+        print('DEBUG: user departmentName = ${user?.departmentName}');
+        print('DEBUG: departments list count = ${apiProvider.departments.length}');
+        if (apiProvider.departments.isNotEmpty) {
+          print('DEBUG: first department = ${apiProvider.departments.first.name} (${apiProvider.departments.first.id})');
+        }
+
+        // Try to get department name from user profile first, then look up from departments list
+        String departmentName = user?.departmentName ?? '';
+        if (departmentName.isEmpty && departmentId != null) {
+          final dept = apiProvider.departments.where((d) => d.id == departmentId).firstOrNull;
+          print('DEBUG: found department = ${dept?.name}');
+          departmentName = dept?.name ?? 'Loading...';
+        }
+        if (departmentName.isEmpty) {
+          departmentName = 'Not Assigned';
+        }
+        print('DEBUG: final departmentName = $departmentName');
+
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.bgSubtle,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: AppColors.border),
           ),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(AppRadius.lg),
-              boxShadow: AppShadows.card,
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    selectedDept?.name ?? 'Select',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: selectedDept != null ? AppColors.textPrimary : AppColors.textMuted,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+          child: Row(
+            children: [
+              Icon(
+                CupertinoIcons.building_2_fill,
+                size: 16,
+                color: FintechColors.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  departmentName,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textPrimary,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
-                Icon(CupertinoIcons.chevron_down, size: 14, color: AppColors.textMuted),
-              ],
-            ),
+              ),
+              // Lock icon to indicate read-only
+              Icon(
+                CupertinoIcons.lock_fill,
+                size: 12,
+                color: AppColors.textMuted,
+              ),
+            ],
           ),
         );
       },
@@ -1402,10 +1749,19 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     final apiProvider = context.read<ApiExpenseProvider>();
     final appProvider = context.read<AppProvider>();
 
+    // Validate vendor selection
+    if (_selectedVendorId == null) {
+      appProvider.showNotification('Please select a vendor', type: 'error');
+      return;
+    }
+
     final amount = double.parse(_amountController.text);
     final categoryId = _selectedCategoryId ?? apiProvider.categories.first.id;
     final description = _notesController.text.isNotEmpty ? _notesController.text : null;
-    final merchantName = _merchantController.text.isNotEmpty ? _merchantController.text : null;
+
+    // Get vendor name from selected vendor
+    final selectedVendor = apiProvider.vendors.where((v) => v.id == _selectedVendorId).firstOrNull;
+    final merchantName = selectedVendor?.name;
 
     ExpenseDTO? result;
 
@@ -1417,6 +1773,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         description: description,
         departmentId: _selectedDepartmentId,
         costCenterId: _selectedCostCenterId,
+        merchantId: _selectedVendorId,
         merchantName: merchantName,
       );
 
@@ -1442,6 +1799,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         originalCurrency: _selectedCurrency,
         departmentId: _selectedDepartmentId,
         costCenterId: _selectedCostCenterId,
+        merchantId: _selectedVendorId,
         merchantName: merchantName,
         submitForApproval: false, // Always create as draft first
       );
