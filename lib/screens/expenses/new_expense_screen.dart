@@ -2205,14 +2205,31 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         imageQuality: 85,
       );
 
-      if (pickedFile != null) {
-        final file = File(pickedFile.path);
-        apiProvider.addPendingAttachment(file);
+      if (pickedFile == null) return;
+
+      // Store image + read bytes for preview (shows the OCR banner immediately)
+      await apiProvider.setPendingReceiptImage(pickedFile);
+
+      // Reset auto-fill guard so this receipt can fill the form
+      setState(() => _ocrAutoFillApplied = false);
+
+      // Create temp draft → upload receipt → OCR
+      // categoryId: use whatever is already selected, else the first available
+      final authProvider = context.read<AuthProvider>();
+      final categoryId = _selectedCategoryId ?? apiProvider.categories.firstOrNull?.id ?? '';
+      await apiProvider.processReceiptWithOCR(
+        categoryId: categoryId,
+        departmentId: _selectedDepartmentId ?? authProvider.user?.departmentId,
+      );
+
+      // Auto-fill form from OCR result
+      if (mounted && apiProvider.hasOCRResult) {
+        _applyOCRAutoFill(apiProvider);
       }
     } catch (e) {
       if (mounted) {
         context.read<AppProvider>().showNotification(
-          'Failed to pick image: $e',
+          'Failed to process receipt: $e',
           type: 'error',
         );
       }
@@ -2429,8 +2446,9 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         );
       }
     } else {
-      // Check if we have a scanned receipt to upload
-      final hasScannedReceipt = _isFromScan && apiProvider.pendingReceiptBytes != null;
+      // pendingReceiptBytes is set by both: (1) scan flow from camera and
+      // (2) in-form attach flow (new: _pickImage now uses setPendingReceiptImage)
+      final hasPendingReceipt = apiProvider.pendingReceiptBytes != null;
 
       // Create new expense with correct amount
       result = await apiProvider.createExpense(
@@ -2448,25 +2466,26 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       );
 
       if (result != null) {
-        // Upload scanned receipt if from scan flow - NO draft expense created
-        if (hasScannedReceipt) {
-          print('DEBUG: Uploading scanned receipt to new expense...');
-          final receiptBytes = apiProvider.pendingReceiptBytes;
-          if (receiptBytes != null) {
-            final uploadResult = await apiProvider.uploadReceipt(
-              expenseId: result.id,
-              file: receiptBytes,
-              fileName: 'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg',
-            );
-
-            if (uploadResult != null) {
-              print('DEBUG: Scanned receipt uploaded: ${uploadResult.id}');
-              // Trigger OCR immediately after upload
-              await apiProvider.processReceiptOCR(uploadResult.id);
-            } else {
-              print('ERROR: Failed to upload scanned receipt');
-            }
+        // Upload the receipt bytes to the real expense.
+        // This handles both: (1) scan flow (from camera) and
+        // (2) in-form attach flow where OCR already ran on a temp draft.
+        // The bytes are re-uploaded here so the receipt is linked to the
+        // real expense. The temp draft (if any) is deleted afterwards.
+        if (hasPendingReceipt) {
+          final receiptBytes = apiProvider.pendingReceiptBytes!;
+          final uploadResult = await apiProvider.uploadReceipt(
+            expenseId: result.id,
+            file: receiptBytes,
+            fileName: 'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg',
+          );
+          if (uploadResult == null) {
+            print('ERROR: Failed to upload pending receipt');
           }
+        }
+
+        // Delete the temp draft expense that was created for OCR (if any)
+        if (apiProvider.tempDraftExpenseId != null) {
+          apiProvider.deleteExpense(apiProvider.tempDraftExpenseId!);
         }
 
         // Upload receipts from manual attachment (gallery)
