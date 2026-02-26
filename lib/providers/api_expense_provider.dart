@@ -376,6 +376,7 @@ class ApiExpenseProvider extends ChangeNotifier {
     String? merchantId,
     String? merchantName,
     bool submitForApproval = false,
+    Map<String, dynamic>? metadata,
   }) async {
     _isSubmitting = true;
     _error = null;
@@ -393,6 +394,7 @@ class ApiExpenseProvider extends ChangeNotifier {
       merchantId: merchantId,
       merchantName: merchantName,
       submitForApproval: submitForApproval,
+      metadata: metadata,
     );
 
     final result = await _expenseService.createExpense(request);

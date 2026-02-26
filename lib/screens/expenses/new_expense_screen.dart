@@ -131,6 +131,44 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     });
   }
 
+  /// Build metadata map to be stored on the expense.
+  /// Always includes receipt source info. If OCR ran, includes the full
+  /// extracted data (merchant, amount, date, line items, etc.).
+  Map<String, dynamic>? _buildExpenseMetadata(ApiExpenseProvider apiProvider) {
+    final hasPendingReceipt = apiProvider.pendingReceiptBytes != null;
+    final hasOCR = apiProvider.hasOCRResult;
+
+    if (!hasPendingReceipt && !hasOCR) return null;
+
+    final meta = <String, dynamic>{};
+
+    if (hasPendingReceipt) {
+      meta['receiptSource'] = _isFromScan ? 'camera_scan' : 'manual_attach';
+    }
+
+    if (hasOCR) {
+      final ocrData = apiProvider.ocrResult?.ocrData ?? {};
+      final receiptId = apiProvider.ocrResult?.id;
+
+      meta['ocr'] = {
+        'status': 'completed',
+        if (receiptId != null) 'receiptId': receiptId,
+        if (ocrData['merchantName'] != null) 'merchantName': ocrData['merchantName'],
+        if (ocrData['merchantAddress'] != null) 'merchantAddress': ocrData['merchantAddress'],
+        if (ocrData['transactionDate'] != null) 'transactionDate': ocrData['transactionDate'],
+        if (ocrData['totalAmount'] != null) 'totalAmount': ocrData['totalAmount'],
+        if (ocrData['currency'] != null) 'currency': ocrData['currency'],
+        if (ocrData['subtotal'] != null) 'subtotal': ocrData['subtotal'],
+        if (ocrData['taxAmount'] != null) 'taxAmount': ocrData['taxAmount'],
+        if (ocrData['discountAmount'] != null) 'discountAmount': ocrData['discountAmount'],
+        if (ocrData['paymentMethod'] != null) 'paymentMethod': ocrData['paymentMethod'],
+        if (ocrData['lineItems'] != null) 'lineItems': ocrData['lineItems'],
+      };
+    }
+
+    return meta;
+  }
+
   void _loadEditingData() {
     final apiProvider = context.read<ApiExpenseProvider>();
     final authProvider = context.read<AuthProvider>();
@@ -2450,6 +2488,9 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       // (2) in-form attach flow (new: _pickImage now uses setPendingReceiptImage)
       final hasPendingReceipt = apiProvider.pendingReceiptBytes != null;
 
+      // Build metadata: receipt source info + full OCR data if available
+      final metadata = _buildExpenseMetadata(apiProvider);
+
       // Create new expense with correct amount
       result = await apiProvider.createExpense(
         amount: amount,
@@ -2463,6 +2504,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         merchantId: _selectedVendorId,
         merchantName: merchantName,
         submitForApproval: false, // Always create as draft first
+        metadata: metadata,
       );
 
       if (result != null) {
