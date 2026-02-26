@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
 import '../../providers/api_expense_provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../models/expense.dart';
 import '../../services/services.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/layout/bottom_navigation.dart';

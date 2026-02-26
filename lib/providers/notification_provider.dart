@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import '../models/notification.dart';
 import '../services/api/approval_service.dart';
 import '../services/api/expense_service.dart';
 import '../services/models/approval_dto.dart';
 import '../services/models/expense_dto.dart';
+import '../services/models/notification_dto.dart';
 
 /// Provider for managing notifications via polling
 ///

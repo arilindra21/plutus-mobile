@@ -373,6 +373,12 @@ class ReceiptDTO {
   final String? verifiedBy;
   final DateTime createdAt;
 
+  // OCR fields
+  final int? ocrStatus;  // 1=pending, 2=processing, 5=completed, 6=failed
+  final String? ocrStatusName;  // "pending", "processing", "completed", "failed"
+  final Map<String, dynamic>? ocrData;  // Extracted data from OCR
+  final DateTime? ocrProcessedAt;  // When OCR completed
+
   ReceiptDTO({
     required this.id,
     required this.expenseId,
@@ -385,25 +391,59 @@ class ReceiptDTO {
     this.verifiedAt,
     this.verifiedBy,
     required this.createdAt,
+    this.ocrStatus,
+    this.ocrStatusName,
+    this.ocrData,
+    this.ocrProcessedAt,
   });
 
   factory ReceiptDTO.fromJson(Map<String, dynamic> json) {
+    // Handle API response with 'Body' wrapper
+    final body = json['Body'] as Map<String, dynamic>?;
+
+    // Use body if available, otherwise use json directly (for backward compatibility)
+    final data = body ?? json;
+
     return ReceiptDTO(
-      id: json['id'] ?? '',
-      expenseId: json['expenseId'] ?? '',
-      fileName: json['fileName'],
-      fileType: json['fileType'],
-      fileUrl: json['fileUrl'],
-      thumbnailUrl: json['thumbnailUrl'],
-      fileSize: json['fileSize'],
-      status: json['status'],
-      verifiedAt: json['verifiedAt'] != null
-          ? DateTime.tryParse(json['verifiedAt'])
+      id: data['id'] ?? data['receiptId'] ?? '',
+      expenseId: data['expenseId'] ?? '',
+      fileName: data['fileName'],
+      fileType: data['fileType'],
+      fileUrl: data['fileUrl'],
+      thumbnailUrl: data['thumbnailUrl'],
+      fileSize: data['fileSize'],
+      status: data['status'],
+      verifiedAt: data['verifiedAt'] != null
+          ? DateTime.tryParse(data['verifiedAt'])
           : null,
-      verifiedBy: json['verifiedBy'],
-      createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
+      verifiedBy: data['verifiedBy'],
+      createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
+      ocrStatus: data['ocrStatus'],
+      ocrStatusName: data['ocrStatusName'],
+      ocrData: data['ocrData'] as Map<String, dynamic>?,
+      ocrProcessedAt: data['ocrProcessedAt'] != null
+          ? DateTime.tryParse(data['ocrProcessedAt'])
+          : null,
     );
   }
+
+  // Helper getters for OCR status
+  bool get isOcrPending => ocrStatus == 1;
+  bool get isOcrProcessing => ocrStatus == 2;
+  bool get isOcrCompleted => ocrStatus == 5;
+  bool get isOcrFailed => ocrStatus == 6;
+
+  // Get extracted data safely
+  String? get extractedMerchant => ocrData?['merchant_name'] ?? ocrData?['merchant'];
+  double? get extractedAmount {
+    final amount = ocrData?['total_amount'] ?? ocrData?['amount'];
+    if (amount is num) return amount.toDouble();
+    if (amount is String) return double.tryParse(amount);
+    return null;
+  }
+  String? get extractedDate => ocrData?['transaction_date'] ?? ocrData?['date'];
+  String? get extractedCurrency => ocrData?['currency'];
+  List<dynamic>? get extractedItems => ocrData?['line_items'] ?? ocrData?['items'];
 }
 
 /// Policy flag DTO

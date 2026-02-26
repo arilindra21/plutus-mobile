@@ -12,6 +12,7 @@ export 'api/category_service.dart';
 export 'api/transaction_service.dart';
 export 'api/budget_service.dart';
 export 'api/vendor_service.dart';
+export 'api/receipt_service.dart';
 
 // DTOs / Models
 export 'models/user_dto.dart';

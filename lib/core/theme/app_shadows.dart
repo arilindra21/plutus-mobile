@@ -7,15 +7,6 @@ class AppShadows {
   AppShadows._();
 
   // ============================================
-  // SHADOW COLORS
-  // ============================================
-
-  static const Color _shadowColor = Color(0x0A000000);
-  static const Color _shadowColorMedium = Color(0x14000000);
-  static const Color _shadowColorDark = Color(0x1F000000);
-  static const Color _shadowColorLight = Color(0x05000000);
-
-  // ============================================
   // BASIC SHADOWS
   // ============================================
 
@@ -51,7 +42,7 @@ class AppShadows {
   /// Medium shadow - elevated cards
   static const List<BoxShadow> md = [
     BoxShadow(
-      color: Color(0x0A000000),
+      color: Color(0x08000000),
       blurRadius: 8,
       offset: Offset(0, 2),
       spreadRadius: 0,
@@ -156,12 +147,24 @@ class AppShadows {
       offset: Offset(0, 1),
       spreadRadius: 0,
     ),
+    BoxShadow(
+      color: Color(0x0A000000),
+      blurRadius: 2,
+      offset: Offset(0, 1),
+      spreadRadius: 0,
+    ),
   ];
 
   /// Navigation bar shadow
   static const List<BoxShadow> navBar = [
     BoxShadow(
       color: Color(0x08000000),
+      blurRadius: 8,
+      offset: Offset(0, 2),
+      spreadRadius: 0,
+    ),
+    BoxShadow(
+      color: Color(0x0A000000),
       blurRadius: 8,
       offset: Offset(0, 2),
       spreadRadius: 0,
@@ -176,6 +179,12 @@ class AppShadows {
       offset: Offset(0, -2),
       spreadRadius: 0,
     ),
+    BoxShadow(
+      color: Color(0x0A000000),
+      blurRadius: 8,
+      offset: Offset(0, -2),
+      spreadRadius: 0,
+    ),
   ];
 
   /// Bottom sheet shadow
@@ -183,13 +192,13 @@ class AppShadows {
     BoxShadow(
       color: Color(0x1F000000),
       blurRadius: 40,
-      offset: Offset(0, -12),
+      offset: Offset(0, 12),
       spreadRadius: 0,
     ),
     BoxShadow(
       color: Color(0x0A000000),
       blurRadius: 10,
-      offset: Offset(0, -4),
+      offset: Offset(0, 8),
       spreadRadius: 0,
     ),
   ];
@@ -234,6 +243,12 @@ class AppShadows {
       offset: Offset(0, 2),
       spreadRadius: 0,
     ),
+    BoxShadow(
+      color: Color(0x0F000000),
+      blurRadius: 4,
+      offset: Offset(0, 1),
+      spreadRadius: 0,
+    ),
   ];
 
   /// FAB (Floating Action Button) shadow
@@ -253,24 +268,36 @@ class AppShadows {
   ];
 
   /// Input focus shadow (blue glow)
-  static List<BoxShadow> inputFocus = [
-    BoxShadow(
-      color: AppColors.primary.withOpacity(0.2),
-      blurRadius: 8,
-      offset: Offset.zero,
-      spreadRadius: 0,
-    ),
-  ];
+  static List<BoxShadow> get inputFocus => [
+        BoxShadow(
+          color: AppColors.primary.withValues(alpha: 0.2),
+          blurRadius: 8,
+          offset: Offset.zero,
+          spreadRadius: 0,
+        ),
+        BoxShadow(
+          color: AppColors.primary,
+          blurRadius: 8,
+          offset: Offset.zero,
+          spreadRadius: 0,
+        ),
+      ];
 
   /// Error input shadow (red glow)
-  static List<BoxShadow> inputError = [
-    BoxShadow(
-      color: AppColors.error.withOpacity(0.2),
-      blurRadius: 8,
-      offset: Offset.zero,
-      spreadRadius: 0,
-    ),
-  ];
+  static List<BoxShadow> get inputError => [
+        BoxShadow(
+          color: AppColors.error.withValues(alpha: 0.2),
+          blurRadius: 8,
+          offset: Offset.zero,
+          spreadRadius: 0,
+        ),
+        BoxShadow(
+          color: AppColors.error,
+          blurRadius: 8,
+          offset: Offset.zero,
+          spreadRadius: 0,
+        ),
+      ];
 
   // ============================================
   // COLORED SHADOWS
@@ -280,6 +307,12 @@ class AppShadows {
   static List<BoxShadow> primaryShadow({double opacity = 0.3}) => [
         BoxShadow(
           color: AppColors.primary.withOpacity(opacity),
+          blurRadius: 16,
+          offset: const Offset(0, 4),
+          spreadRadius: 0,
+        ),
+        BoxShadow(
+          color: AppColors.primary,
           blurRadius: 16,
           offset: const Offset(0, 4),
           spreadRadius: 0,
@@ -294,12 +327,24 @@ class AppShadows {
           offset: const Offset(0, 4),
           spreadRadius: 0,
         ),
+        BoxShadow(
+          color: AppColors.success,
+          blurRadius: 16,
+          offset: const Offset(0, 4),
+          spreadRadius: 0,
+        ),
       ];
 
   /// Error color shadow
   static List<BoxShadow> errorShadow({double opacity = 0.3}) => [
         BoxShadow(
           color: AppColors.error.withOpacity(opacity),
+          blurRadius: 16,
+          offset: const Offset(0, 4),
+          spreadRadius: 0,
+        ),
+        BoxShadow(
+          color: AppColors.error,
           blurRadius: 16,
           offset: const Offset(0, 4),
           spreadRadius: 0,
@@ -318,6 +363,12 @@ class AppShadows {
       offset: Offset(0, 2),
       spreadRadius: 0,
     ),
+    BoxShadow(
+      color: Color(0x05000000),
+      blurRadius: 4,
+      offset: Offset(0, 1),
+      spreadRadius: 0,
+    ),
   ];
 
   /// Modal shadow for dark mode
@@ -326,6 +377,12 @@ class AppShadows {
       color: Color(0x66000000),
       blurRadius: 60,
       offset: Offset(0, 20),
+      spreadRadius: 0,
+    ),
+    BoxShadow(
+      color: Color(0x14000000),
+      blurRadius: 20,
+      offset: Offset(0, 8),
       spreadRadius: 0,
     ),
   ];
@@ -360,10 +417,15 @@ class AppShadows {
     double blurRadius = 8,
     Offset offset = const Offset(0, 2),
     double spreadRadius = 0,
-  }) =>
-      [
+  }) => [
         BoxShadow(
           color: color,
+          blurRadius: blurRadius,
+          offset: offset,
+          spreadRadius: spreadRadius,
+        ),
+        BoxShadow(
+          color: color.withValues(alpha: 0.2),
           blurRadius: blurRadius,
           offset: offset,
           spreadRadius: spreadRadius,
@@ -371,11 +433,11 @@ class AppShadows {
       ];
 
   /// Adaptive shadow (light/dark mode)
-  static List<BoxShadow> adaptive(BuildContext context, {int elevation = 2}) {
+  static List<BoxShadow> adaptive(BuildContext context, {int level = 2}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     if (isDark) {
       return cardDark;
     }
-    return AppShadows.elevation(elevation);
+    return elevation(level);
   }
 }

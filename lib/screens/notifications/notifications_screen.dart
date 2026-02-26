@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
 import '../../providers/api_expense_provider.dart';
 import '../../providers/notification_provider.dart';
-import '../../models/notification.dart';
+import '../../services/models/notification_dto.dart';
 import '../../widgets/layout/bottom_navigation.dart';
 
 class NotificationsScreen extends StatelessWidget {

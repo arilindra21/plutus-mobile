@@ -1,8 +1,11 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart';
 import '../../core/design_tokens.dart';
 import '../../providers/app_provider.dart';
 import '../../providers/auth_provider.dart';
@@ -34,14 +37,17 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
   bool _isEditing = false;
   String? _editingApiId;
   bool _isInitialized = false;
+  bool _isFromScan = false; // Flag to indicate OCR mode
+  bool _ocrAutoFillApplied = false; // Prevent duplicate auto-fill
 
   final List<String> _currencies = ['IDR', 'USD', 'SGD', 'MYR', 'EUR', 'JPY', 'AUD'];
 
   final List<Map<String, dynamic>> _expenseTypes = [
     {'value': 'reimbursement', 'label': 'Reimbursement', 'icon': CupertinoIcons.doc_text_fill},
     {'value': 'card', 'label': 'Card', 'icon': CupertinoIcons.creditcard_fill},
-    {'value': 'petty_cash', 'label': 'Petty Cash', 'icon': CupertinoIcons.money_dollar_circle_fill},
-    {'value': 'cash_advance', 'label': 'Advance', 'icon': CupertinoIcons.arrow_right_circle_fill},
+    // Hide petty_cash and cash_advance for MVP (not implemented yet)
+    // {'value': 'petty_cash', 'label': 'Petty Cash', 'icon': CupertinoIcons.money_dollar_circle_fill},
+    // {'value': 'cash_advance', 'label': 'Advance', 'icon': CupertinoIcons.arrow_right_circle_fill},
   ];
 
   final ImagePicker _imagePicker = ImagePicker();
@@ -58,10 +64,65 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     if (_isInitialized) return;
 
     final apiProvider = context.read<ApiExpenseProvider>();
+    final appProvider = context.read<AppProvider>();
+
     await apiProvider.fetchReferenceData();
     _loadEditingData();
 
+    // Check if coming from scan with pending receipt
+    final params = appProvider.screenParams;
+    _isFromScan = params?['fromScan'] == true;
+
     _isInitialized = true;
+  }
+
+  void _applyOCRAutoFill(ApiExpenseProvider apiProvider) {
+    if (_ocrAutoFillApplied) return;
+
+    print('DEBUG: Applying OCR auto-fill...');
+
+    // Get OCR data
+    final amount = apiProvider.getOCRAmount();
+    final date = apiProvider.getOCRDate();
+    final currency = apiProvider.getOCRCurrency();
+    final merchantName = apiProvider.getOCRMerchantName();
+
+    setState(() {
+      // Auto-fill amount
+      if (amount != null && amount > 0) {
+        _amountController.text = _ThousandsSeparatorFormatter._format(amount.toStringAsFixed(0));
+        print('DEBUG: Auto-filled amount: $amount');
+      }
+
+      // Auto-fill date
+      if (date != null) {
+        _selectedDate = date;
+        print('DEBUG: Auto-filled date: $date');
+      }
+
+      // Auto-fill currency
+      if (currency != null && _currencies.contains(currency)) {
+        _selectedCurrency = currency;
+        print('DEBUG: Auto-filled currency: $currency');
+      }
+
+      // Try to match merchant/vendor by name
+      if (merchantName != null && merchantName.isNotEmpty) {
+        final matchedVendor = apiProvider.vendors.where(
+          (v) => v.name.toLowerCase().contains(merchantName.toLowerCase()) ||
+                 merchantName.toLowerCase().contains(v.name.toLowerCase())
+        ).firstOrNull;
+
+        if (matchedVendor != null) {
+          _selectedVendorId = matchedVendor.id;
+          print('DEBUG: Auto-filled vendor: ${matchedVendor.name}');
+        } else {
+          print('DEBUG: No vendor match for: $merchantName');
+        }
+      }
+
+      _ocrAutoFillApplied = true;
+    });
   }
 
   void _loadEditingData() {
@@ -73,7 +134,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       setState(() {
         _isEditing = true;
         _editingApiId = expense.id;
-        _amountController.text = expense.originalAmount.toStringAsFixed(0);
+        _amountController.text = _ThousandsSeparatorFormatter._format(expense.originalAmount.toStringAsFixed(0));
         _selectedCategoryId = expense.categoryId;
         _selectedDepartmentId = expense.departmentId;
         _selectedCostCenterId = expense.costCenterId;
@@ -97,9 +158,524 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
   @override
   void dispose() {
+    // Clear OCR state when leaving
+    final apiProvider = context.read<ApiExpenseProvider>();
+    apiProvider.clearOCRState();
+
     _amountController.dispose();
     _notesController.dispose();
     super.dispose();
+  }
+
+  /// Build receipt preview section with OCR status
+  Widget _buildReceiptPreviewSection() {
+    return Consumer<ApiExpenseProvider>(
+      builder: (context, apiProvider, _) {
+        final hasReceipt = apiProvider.pendingReceiptBytes != null;
+        final ocrState = apiProvider.ocrState;
+        final hasOCRResult = apiProvider.hasOCRResult;
+
+        // Don't show if no receipt and not from scan
+        if (!hasReceipt && !_isFromScan) {
+          return const SizedBox.shrink();
+        }
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: AppRadius.borderRadiusMd,
+            border: Border.all(
+              color: _getOCRBorderColor(ocrState),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header row
+              Row(
+                children: [
+                  Icon(
+                    CupertinoIcons.doc_text_viewfinder,
+                    size: 20,
+                    color: _getOCRIconColor(ocrState),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Receipt',
+                    style: AppTypography.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  // Status badge
+                  _buildOCRStatusBadge(ocrState),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // Content row: Image + Status/Results
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Image thumbnail
+                  if (hasReceipt)
+                    GestureDetector(
+                      onTap: () => _showReceiptFullscreen(apiProvider.pendingReceiptBytes!),
+                      child: Container(
+                        width: 80,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(7),
+                          child: Image.memory(
+                            apiProvider.pendingReceiptBytes!,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(width: 12),
+
+                  // OCR Status/Results
+                  Expanded(
+                    child: _buildOCRStatusContent(apiProvider, ocrState, hasOCRResult),
+                  ),
+                ],
+              ),
+
+              // Actions row
+              if (hasReceipt && ocrState != OCRProcessingState.creatingDraft &&
+                  ocrState != OCRProcessingState.uploading &&
+                  ocrState != OCRProcessingState.processingOCR)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Row(
+                    children: [
+                      // Replace button
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _replaceReceipt,
+                          icon: const Icon(CupertinoIcons.refresh, size: 16),
+                          label: const Text('Replace'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.textSecondary,
+                            side: const BorderSide(color: AppColors.border),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Remove button
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _removeReceipt,
+                          icon: const Icon(CupertinoIcons.trash, size: 16),
+                          label: const Text('Remove'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.statusRejected,
+                            side: BorderSide(color: AppColors.statusRejected.withOpacity(0.5)),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                          ),
+                        ),
+                      ),
+                      // Retry button (only on failure)
+                      if (ocrState == OCRProcessingState.failed) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _retryOCR,
+                            icon: const Icon(CupertinoIcons.arrow_clockwise, size: 16),
+                            label: const Text('Retry'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Color _getOCRBorderColor(OCRProcessingState state) {
+    switch (state) {
+      case OCRProcessingState.completed:
+        return AppColors.statusApproved;
+      case OCRProcessingState.failed:
+        return AppColors.statusRejected;
+      case OCRProcessingState.creatingDraft:
+      case OCRProcessingState.uploading:
+      case OCRProcessingState.processingOCR:
+        return AppColors.primary;
+      default:
+        return AppColors.border;
+    }
+  }
+
+  Color _getOCRIconColor(OCRProcessingState state) {
+    switch (state) {
+      case OCRProcessingState.completed:
+        return AppColors.statusApproved;
+      case OCRProcessingState.failed:
+        return AppColors.statusRejected;
+      case OCRProcessingState.creatingDraft:
+      case OCRProcessingState.uploading:
+      case OCRProcessingState.processingOCR:
+        return AppColors.primary;
+      default:
+        return AppColors.textSecondary;
+    }
+  }
+
+  Widget _buildOCRStatusBadge(OCRProcessingState state) {
+    String text;
+    Color bgColor;
+    Color textColor;
+
+    switch (state) {
+      case OCRProcessingState.idle:
+        text = 'Ready';
+        bgColor = AppColors.border;
+        textColor = AppColors.textSecondary;
+        break;
+      case OCRProcessingState.creatingDraft:
+        text = 'Preparing...';
+        bgColor = AppColors.primary.withOpacity(0.1);
+        textColor = AppColors.primary;
+        break;
+      case OCRProcessingState.uploading:
+        text = 'Uploading...';
+        bgColor = AppColors.primary.withOpacity(0.1);
+        textColor = AppColors.primary;
+        break;
+      case OCRProcessingState.processingOCR:
+        text = 'Extracting...';
+        bgColor = AppColors.primary.withOpacity(0.1);
+        textColor = AppColors.primary;
+        break;
+      case OCRProcessingState.completed:
+        text = 'Extracted';
+        bgColor = AppColors.statusApproved.withOpacity(0.1);
+        textColor = AppColors.statusApproved;
+        break;
+      case OCRProcessingState.failed:
+        text = 'Failed';
+        bgColor = AppColors.statusRejected.withOpacity(0.1);
+        textColor = AppColors.statusRejected;
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (state == OCRProcessingState.creatingDraft ||
+              state == OCRProcessingState.uploading ||
+              state == OCRProcessingState.processingOCR)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: textColor,
+                ),
+              ),
+            ),
+          Text(
+            text,
+            style: AppTypography.caption.copyWith(
+              color: textColor,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOCRStatusContent(ApiExpenseProvider apiProvider, OCRProcessingState state, bool hasOCRResult) {
+    switch (state) {
+      case OCRProcessingState.idle:
+        return Text(
+          'Receipt attached. Tap to process.',
+          style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
+        );
+
+      case OCRProcessingState.creatingDraft:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Creating expense...',
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 4),
+            LinearProgressIndicator(
+              backgroundColor: AppColors.border,
+              color: AppColors.primary,
+            ),
+          ],
+        );
+
+      case OCRProcessingState.uploading:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Uploading receipt...',
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 4),
+            LinearProgressIndicator(
+              backgroundColor: AppColors.border,
+              color: AppColors.primary,
+            ),
+          ],
+        );
+
+      case OCRProcessingState.processingOCR:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Extracting data with AI...',
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Analyzing receipt details',
+              style: AppTypography.caption.copyWith(
+                color: AppColors.textMuted,
+              ),
+            ),
+            const SizedBox(height: 4),
+            LinearProgressIndicator(
+              backgroundColor: AppColors.border,
+              color: AppColors.primary,
+            ),
+          ],
+        );
+
+      case OCRProcessingState.completed:
+        // Show extracted data summary
+        final merchantName = apiProvider.getOCRMerchantName();
+        final amount = apiProvider.getOCRAmount();
+        final date = apiProvider.getOCRDate();
+        final currency = apiProvider.getOCRCurrency() ?? 'IDR';
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (merchantName != null) ...[
+              Row(
+                children: [
+                  Icon(CupertinoIcons.building_2_fill, size: 14, color: AppColors.statusApproved),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      merchantName,
+                      style: AppTypography.bodySmall.copyWith(fontWeight: FontWeight.w500),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+            ],
+            if (amount != null) ...[
+              Row(
+                children: [
+                  Icon(CupertinoIcons.money_dollar_circle, size: 14, color: AppColors.statusApproved),
+                  const SizedBox(width: 4),
+                  Text(
+                    '$currency ${_formatAmount(amount)}',
+                    style: AppTypography.bodySmall.copyWith(fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+            ],
+            if (date != null) ...[
+              Row(
+                children: [
+                  Icon(CupertinoIcons.calendar, size: 14, color: AppColors.statusApproved),
+                  const SizedBox(width: 4),
+                  Text(
+                    _formatDate(date),
+                    style: AppTypography.bodySmall.copyWith(fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              '✓ Form auto-filled with extracted data',
+              style: AppTypography.caption.copyWith(
+                color: AppColors.statusApproved,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        );
+
+      case OCRProcessingState.failed:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(CupertinoIcons.exclamationmark_triangle, size: 14, color: AppColors.statusRejected),
+                const SizedBox(width: 4),
+                Text(
+                  'OCR extraction failed',
+                  style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.statusRejected,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              apiProvider.ocrError ?? 'Unknown error',
+              style: AppTypography.caption.copyWith(
+                color: AppColors.textMuted,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'You can retry or fill the form manually.',
+              style: AppTypography.caption.copyWith(
+                color: AppColors.textSecondary,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        );
+    }
+  }
+
+  String _formatAmount(double amount) {
+    if (amount >= 1000000) {
+      return '${(amount / 1000000).toStringAsFixed(1)}M';
+    } else if (amount >= 1000) {
+      return '${(amount / 1000).toStringAsFixed(0)}K';
+    }
+    return amount.toStringAsFixed(0);
+  }
+
+  String _formatDate(DateTime date) {
+    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
+  }
+
+  void _showReceiptFullscreen(Uint8List imageBytes) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                child: Image.memory(imageBytes),
+              ),
+            ),
+            Positioned(
+              top: 40,
+              right: 16,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _replaceReceipt() {
+    final apiProvider = context.read<ApiExpenseProvider>();
+    apiProvider.clearOCRState();
+
+    // Navigate to camera screen
+    context.read<AppProvider>().navigateToWithParams('camera', {'mode': 'scan'});
+  }
+
+  void _removeReceipt() {
+    final apiProvider = context.read<ApiExpenseProvider>();
+
+    // Delete temp draft expense if created
+    if (apiProvider.tempDraftExpenseId != null) {
+      apiProvider.deleteExpense(apiProvider.tempDraftExpenseId!);
+    }
+
+    apiProvider.clearOCRState();
+    setState(() {
+      _isFromScan = false;
+      _ocrAutoFillApplied = false;
+    });
+  }
+
+  void _retryOCR() async {
+    final apiProvider = context.read<ApiExpenseProvider>();
+    final authProvider = context.read<AuthProvider>();
+
+    final categoryId = _selectedCategoryId ?? apiProvider.categories.firstOrNull?.id;
+    if (categoryId == null) return;
+
+    await apiProvider.retryOCR(
+      categoryId: categoryId,
+      departmentId: authProvider.user?.departmentId,
+    );
+
+    // Auto-fill if successful
+    if (apiProvider.hasOCRResult && mounted) {
+      setState(() {
+        _ocrAutoFillApplied = false;
+      });
+      _applyOCRAutoFill(apiProvider);
+    }
   }
 
   @override
@@ -120,6 +696,9 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                     children: [
                       // Info banner for new expense
                       if (!_isEditing) _buildInfoBanner(),
+
+                      // Receipt Preview Section (when from scan)
+                      _buildReceiptPreviewSection(),
 
                       // Amount Section (Hero)
                       _buildAmountSection(),
@@ -379,6 +958,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                   child: TextFormField(
                     controller: _amountController,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [_ThousandsSeparatorFormatter()],
                     textAlign: TextAlign.center,
                     cursorColor: FintechColors.primary,
                     cursorWidth: 2,
@@ -407,8 +987,8 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                       if (value == null || value.isEmpty) {
                         return 'Amount is required';
                       }
-                      final parsed = double.tryParse(value.replaceAll(',', ''));
-                      if (parsed == null) {
+                      final parsed = double.tryParse(_ThousandsSeparatorFormatter.toRaw(value));
+                      if (parsed == null || parsed <= 0) {
                         return 'Invalid amount';
                       }
                       return null;
@@ -1211,11 +1791,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     );
   }
 
-  String _formatDate(DateTime date) {
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return '${date.day} ${months[date.month - 1]} ${date.year}';
-  }
-
   /// Read-only department display from user profile
   Widget _buildDepartmentDisplay() {
     return Consumer2<AuthProvider, ApiExpenseProvider>(
@@ -1427,13 +2002,14 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
   Widget _buildActionButtons() {
     return Consumer<ApiExpenseProvider>(
       builder: (context, apiProvider, _) {
-        final isLoading = apiProvider.isLoading;
+        // Check both isLoading and isSubmitting (upload receipts uses isSubmitting)
+        final isLoading = apiProvider.isLoading || apiProvider.isSubmitting;
 
         if (_isEditing) {
           return Column(
             children: [
               _buildPrimaryButton(
-                label: 'Save Changes',
+                label: isLoading ? 'Saving...' : 'Save Changes',
                 icon: CupertinoIcons.checkmark_alt,
                 isLoading: isLoading,
                 onTap: isLoading ? null : _submitForm,
@@ -1442,7 +2018,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
               _buildSecondaryButton(
                 label: 'Cancel',
                 icon: CupertinoIcons.xmark,
-                onTap: () {
+                onTap: isLoading ? null : () {
                   context.read<ApiExpenseProvider>().setSelectedExpense(null);
                   context.read<AppProvider>().goBack();
                 },
@@ -1749,21 +2325,22 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     final apiProvider = context.read<ApiExpenseProvider>();
     final appProvider = context.read<AppProvider>();
 
-    // Validate vendor selection
-    if (_selectedVendorId == null) {
-      appProvider.showNotification('Please select a vendor', type: 'error');
-      return;
-    }
+    try {
+      // Validate vendor selection
+      if (_selectedVendorId == null) {
+        appProvider.showNotification('Please select a vendor', type: 'error');
+        return;
+      }
 
-    final amount = double.parse(_amountController.text);
-    final categoryId = _selectedCategoryId ?? apiProvider.categories.first.id;
-    final description = _notesController.text.isNotEmpty ? _notesController.text : null;
+      final amount = double.parse(_ThousandsSeparatorFormatter.toRaw(_amountController.text));
+      final categoryId = _selectedCategoryId ?? apiProvider.categories.first.id;
+      final description = _notesController.text.isNotEmpty ? _notesController.text : null;
 
-    // Get vendor name from selected vendor
-    final selectedVendor = apiProvider.vendors.where((v) => v.id == _selectedVendorId).firstOrNull;
-    final merchantName = selectedVendor?.name;
+      // Get vendor name from selected vendor
+      final selectedVendor = apiProvider.vendors.where((v) => v.id == _selectedVendorId).firstOrNull;
+      final merchantName = selectedVendor?.name;
 
-    ExpenseDTO? result;
+      ExpenseDTO? result;
 
     if (_isEditing && _editingApiId != null) {
       result = await apiProvider.updateExpense(
@@ -1778,6 +2355,64 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       );
 
       if (result != null) {
+        // Upload any new receipts if attached during edit
+        final pendingAttachments = apiProvider.pendingAttachments;
+        if (pendingAttachments.isNotEmpty) {
+          print('DEBUG: Uploading ${pendingAttachments.length} new receipts for edited expense...');
+          int uploadedCount = 0;
+
+          for (final file in pendingAttachments) {
+            try {
+              // Handle different file types (File, XFile)
+              String fileName;
+              dynamic fileData;
+
+              if (file is File) {
+                // Mobile: dart:io File
+                fileName = file.path.split('/').last.split('\\').last;
+                fileData = file;
+              } else if (file.runtimeType.toString().contains('XFile')) {
+                // Web: XFile from image_picker
+                final xFile = file as dynamic;
+                fileName = xFile.name as String;
+                fileData = await xFile.readAsBytes();
+              } else {
+                fileName = 'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg';
+                fileData = file;
+              }
+
+              final uploadResult = await apiProvider.uploadReceipt(
+                expenseId: result.id,
+                file: fileData,
+                fileName: fileName,
+              );
+
+              if (uploadResult != null) {
+                uploadedCount++;
+                print('DEBUG: Receipt uploaded: ${uploadResult.fileName}');
+
+                // Process OCR for the uploaded receipt
+                print('DEBUG: Triggering OCR for receipt ${uploadResult.id}');
+                await apiProvider.processReceiptOCR(uploadResult.id);
+              }
+            } catch (e) {
+              print('ERROR: Exception uploading/processing receipt: $e');
+            }
+          }
+
+          apiProvider.clearPendingAttachments();
+
+          // IMPORTANT: Refresh expense to get updated receipts list
+          if (uploadedCount > 0) {
+            print('DEBUG: Refreshing edited expense to get updated receipts...');
+            final refreshedExpense = await apiProvider.getExpense(result.id);
+            if (refreshedExpense != null) {
+              result = refreshedExpense;
+              print('DEBUG: Expense refreshed. Receipts count: ${result.receipts?.length ?? 0}');
+            }
+          }
+        }
+
         apiProvider.setSelectedExpense(result);
         appProvider.goBack();
         appProvider.showNotification('Expense updated', type: 'success');
@@ -1788,8 +2423,10 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         );
       }
     } else {
-      // Workaround: Always create as draft first, then submit separately if needed
-      // This is because API errors when creating with submitForApproval=true
+      // Check if we have a scanned receipt to upload
+      final hasScannedReceipt = _isFromScan && apiProvider.pendingReceiptBytes != null;
+
+      // Create new expense with correct amount
       result = await apiProvider.createExpense(
         amount: amount,
         categoryId: categoryId,
@@ -1805,28 +2442,189 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       );
 
       if (result != null) {
-        // Upload attachments first
+        // Upload scanned receipt if from scan flow - NO draft expense created
+        if (hasScannedReceipt) {
+          print('DEBUG: Uploading scanned receipt to new expense...');
+          final receiptBytes = apiProvider.pendingReceiptBytes;
+          if (receiptBytes != null) {
+            final uploadResult = await apiProvider.uploadReceipt(
+              expenseId: result.id,
+              file: receiptBytes,
+              fileName: 'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg',
+            );
+
+            if (uploadResult != null) {
+              print('DEBUG: Scanned receipt uploaded: ${uploadResult.id}');
+              // Trigger OCR immediately after upload
+              await apiProvider.processReceiptOCR(uploadResult.id);
+            } else {
+              print('ERROR: Failed to upload scanned receipt');
+            }
+          }
+        }
+
+        // Upload receipts from manual attachment (gallery)
         final pendingAttachments = apiProvider.pendingAttachments;
         if (pendingAttachments.isNotEmpty) {
+          print('DEBUG: Uploading ${pendingAttachments.length} receipts...');
+          int uploadedCount = 0;
+          int failedCount = 0;
+
           for (final file in pendingAttachments) {
-            final bytes = await file.readAsBytes();
-            final fileName = file.path.split('/').last.split('\\').last;
-            await apiProvider.uploadReceipt(result.id, bytes, fileName);
+            try {
+              // Handle different file types (File, XFile)
+              String fileName;
+              dynamic fileData;
+
+              if (file is File) {
+                // Mobile: dart:io File
+                fileName = file.path.split('/').last.split('\\').last;
+                fileData = file;
+              } else if (file.runtimeType.toString().contains('XFile')) {
+                // Web: XFile from image_picker
+                final xFile = file as dynamic;
+                fileName = xFile.name as String;
+                fileData = await xFile.readAsBytes(); // Read as Uint8List for web
+              } else {
+                // Fallback: assume it has a name property
+                fileName = 'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg';
+                fileData = file;
+              }
+
+              print('DEBUG: Attempting to upload receipt: $fileName');
+
+              final uploadResult = await apiProvider.uploadReceipt(
+                expenseId: result.id,
+                file: fileData,
+                fileName: fileName,
+              );
+
+              if (uploadResult != null) {
+                uploadedCount++;
+                print('DEBUG: Receipt uploaded successfully: ${uploadResult.fileName}');
+                print('DEBUG: Receipt ID: ${uploadResult.id}');
+
+                // Process OCR for the uploaded receipt
+                print('DEBUG: Triggering OCR processing for receipt ${uploadResult.id}');
+                final ocrResult = await apiProvider.processReceiptOCR(uploadResult.id);
+
+                if (ocrResult != null && ocrResult.ocrData != null) {
+                  print('DEBUG: OCR completed! Data: ${ocrResult.ocrData}');
+                  // OCR data is now available in ocrResult.ocrData
+                  // You can use this to auto-fill form fields if needed
+                } else {
+                  print('WARNING: OCR processing returned null or no data');
+                }
+              } else {
+                failedCount++;
+                print('ERROR: Failed to upload $fileName - uploadResult is null');
+                print('ERROR: Provider error: ${apiProvider.error}');
+              }
+            } catch (e) {
+              failedCount++;
+              print('ERROR: Exception uploading receipt: $e');
+            }
           }
+
           apiProvider.clearPendingAttachments();
+
+          // IMPORTANT: Refresh expense to get updated receipts list
+          print('DEBUG: Refreshing expense to get updated receipts...');
+          final refreshedExpense = await apiProvider.getExpense(result.id);
+          if (refreshedExpense != null) {
+            result = refreshedExpense;
+            print('DEBUG: Expense refreshed. Receipts count: ${result.receipts?.length ?? 0}');
+          }
+
+          // Show upload status
+          if (failedCount > 0) {
+            appProvider.showNotification(
+              'Uploaded $uploadedCount receipts, $failedCount failed',
+              type: 'warning',
+            );
+          }
         }
 
         // If user wants to submit for approval, call submit API separately
         if (_submitForApproval) {
+          // Budget availability check before submission
+          final matchResponse = await apiProvider.matchBudgetForExpense(
+            departmentId: _selectedDepartmentId,
+            categoryId: categoryId,
+            costCenterId: _selectedCostCenterId,
+          );
+
+          if (matchResponse?.budget != null) {
+            final budgetId = matchResponse!.budget!.id;
+
+            final checkResponse = await apiProvider.checkBudgetAvailability(
+              budgetId: budgetId,
+              amount: amount,
+              currency: _selectedCurrency,
+              expenseType: _selectedExpenseType ?? 'reimbursement',
+            );
+
+            if (checkResponse != null) {
+              // Hard cap enforced — block submission
+              if (!checkResponse.canProceed) {
+                appProvider.showNotification(
+                  checkResponse.reason ?? 'Expense exceeds budget limit',
+                  type: 'error',
+                );
+                return;
+              }
+
+              // Would exceed budget but still allowed (e.g. card, out-of-policy)
+              if (checkResponse.wouldExceed) {
+                final shouldProceed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Budget Warning'),
+                    content: Text(
+                      'This expense will exceed the available budget '
+                      '(${checkResponse.budgetCurrency} ${_formatAmount(checkResponse.availableAmount)} remaining). '
+                      'It will be flagged as out-of-policy. Do you want to proceed?',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Proceed'),
+                      ),
+                    ],
+                  ),
+                );
+                if (shouldProceed != true) return;
+              }
+            }
+            // checkResponse null = budget check API failed → proceed without blocking
+          }
+          // matchResponse.budget null = no matching budget found → proceed normally
+
+          print('DEBUG: ========================================');
+          print('DEBUG: Submitting expense for approval...');
+          print('DEBUG: Expense ID: ${result.id}');
+          print('DEBUG: Current receipts count: ${result.receipts?.length ?? 0}');
+          print('DEBUG: Receipt required: ${result.receiptRequired}');
+          print('DEBUG: Missing receipt: ${result.missingReceipt}');
+          print('DEBUG: ========================================');
+
           final submitSuccess = await apiProvider.submitExpense(result.id);
+
           if (submitSuccess) {
             // submitExpense already updates selectedExpense with the new status
             result = apiProvider.selectedExpense;
+            print('DEBUG: ✓ Expense submitted successfully');
           } else {
             // Submit failed, but expense was created as draft
+            final errorMsg = apiProvider.error ?? "Unknown error";
+            print('ERROR: ✗ Submit failed: $errorMsg');
             appProvider.showNotification(
-              'Expense saved as draft. Submit failed: ${apiProvider.error ?? "Unknown error"}',
-              type: 'warning',
+              'Cannot submit: $errorMsg',
+              type: 'error',
             );
             apiProvider.setSelectedExpense(result);
             appProvider.navigateTo('expenseCreated');
@@ -1851,5 +2649,40 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         );
       }
     }
+    } catch (e, stackTrace) {
+      print('ERROR: Exception during expense submission: $e');
+      print('Stack trace: $stackTrace');
+      appProvider.showNotification(
+        'Error: ${e.toString()}',
+        type: 'error',
+      );
+    }
   }
+}
+
+class _ThousandsSeparatorFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+    if (digits.isEmpty) return newValue.copyWith(text: '');
+    final formatted = _format(digits);
+    return newValue.copyWith(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+
+  static String _format(String digits) {
+    final buffer = StringBuffer();
+    for (int i = 0; i < digits.length; i++) {
+      if (i != 0 && (digits.length - i) % 3 == 0) buffer.write('.');
+      buffer.write(digits[i]);
+    }
+    return buffer.toString();
+  }
+
+  static String toRaw(String formatted) => formatted.replaceAll('.', '');
 }

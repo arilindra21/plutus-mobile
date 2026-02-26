@@ -36,6 +36,9 @@ import 'screens/camera/camera_screen.dart';
 // History
 import 'screens/history/history_log_screen.dart';
 
+// Receipt screens
+import 'screens/receipts/receipt_viewer_screen.dart';
+
 // Approver screens
 import 'screens/approver/review_approve_screen.dart';
 import 'screens/approver/approver_expense_detail_screen.dart';
@@ -366,6 +369,10 @@ class _AppRouterState extends State<AppRouter> {
 
       case 'approvalSuccess':
         return const ApprovalSuccessScreen();
+
+      // Receipt viewer
+      case 'receiptViewer':
+        return const ReceiptViewerScreen();
 
       default:
         return const HomeScreen();

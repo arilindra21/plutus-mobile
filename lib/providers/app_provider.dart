@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../models/notification.dart';
+import '../services/models/notification_dto.dart';
 import '../services/models/user_dto.dart' as api;
 
 /// User capabilities

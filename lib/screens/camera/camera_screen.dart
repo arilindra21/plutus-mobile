@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -6,7 +7,6 @@ import 'package:provider/provider.dart';
 import '../../core/design_tokens.dart';
 import '../../providers/app_provider.dart';
 import '../../providers/api_expense_provider.dart';
-import '../../widgets/common/app_button.dart';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -19,6 +19,10 @@ class _CameraScreenState extends State<CameraScreen> {
   final ImagePicker _picker = ImagePicker();
   bool _isProcessing = false;
   String? _processingMessage;
+
+  // Preview state
+  XFile? _capturedImage;
+  Uint8List? _capturedImageBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -34,13 +38,17 @@ class _CameraScreenState extends State<CameraScreen> {
             // Header
             _buildHeader(context, isAttachMode),
 
-            // Camera Preview (Mock)
+            // Camera Preview or Captured Image Preview
             Expanded(
-              child: _buildCameraPreview(),
+              child: _capturedImage != null
+                  ? _buildImagePreview()
+                  : _buildCameraPreview(),
             ),
 
-            // Controls
-            _buildControls(context),
+            // Controls (different based on state)
+            _capturedImage != null
+                ? _buildPreviewControls(context)
+                : _buildCaptureControls(context),
           ],
         ),
       ),
@@ -53,21 +61,28 @@ class _CameraScreenState extends State<CameraScreen> {
       child: Row(
         children: [
           GestureDetector(
-            onTap: () => context.read<AppProvider>().goBack(),
+            onTap: () {
+              // Clear state and go back
+              _clearCapturedImage();
+              context.read<AppProvider>().goBack();
+            },
             child: const Icon(Icons.close, color: Colors.white),
           ),
           const SizedBox(width: AppSpacing.lg),
           Text(
-            isAttachMode ? 'Attach Receipt' : 'Scan Receipt',
+            _capturedImage != null
+                ? 'Review Receipt'
+                : (isAttachMode ? 'Attach Receipt' : 'Scan Receipt'),
             style: AppTypography.headingSmall.copyWith(color: Colors.white),
           ),
           const Spacer(),
-          GestureDetector(
-            onTap: () {
-              // Toggle flash (mock)
-            },
-            child: const Icon(Icons.flash_off, color: Colors.white),
-          ),
+          if (_capturedImage == null)
+            GestureDetector(
+              onTap: () {
+                // Toggle flash (mock)
+              },
+              child: const Icon(Icons.flash_off, color: Colors.white),
+            ),
         ],
       ),
     );
@@ -182,6 +197,48 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
+  Widget _buildImagePreview() {
+    return Stack(
+      children: [
+        // Image preview
+        Container(
+          color: Colors.black,
+          child: Center(
+            child: _capturedImageBytes != null
+                ? Image.memory(
+                    _capturedImageBytes!,
+                    fit: BoxFit.contain,
+                  )
+                : const CircularProgressIndicator(color: AppColors.primary),
+          ),
+        ),
+
+        // Processing overlay
+        if (_isProcessing)
+          Container(
+            color: Colors.black54,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  Text(
+                    _processingMessage ?? 'Processing...',
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _cornerAccent() {
     return Container(
       width: 24,
@@ -195,7 +252,7 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
-  Widget _buildControls(BuildContext context) {
+  Widget _buildCaptureControls(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.xl),
       child: Column(
@@ -212,7 +269,7 @@ class _CameraScreenState extends State<CameraScreen> {
               ),
               child: Container(
                 margin: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   shape: BoxShape.circle,
                   color: Colors.white,
                 ),
@@ -257,11 +314,104 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
-  void _captureImage() async {
+  Widget _buildPreviewControls(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      child: Column(
+        children: [
+          // Use This Receipt button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isProcessing ? null : _useThisReceipt,
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Use This Receipt'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          // Retake button
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isProcessing ? null : _retakePhoto,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retake Photo'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: const BorderSide(color: Colors.white),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _clearCapturedImage() {
+    setState(() {
+      _capturedImage = null;
+      _capturedImageBytes = null;
+    });
+  }
+
+  void _retakePhoto() {
+    _clearCapturedImage();
+  }
+
+  Future<void> _useThisReceipt() async {
+    if (_capturedImage == null) return;
+
     final appProvider = context.read<AppProvider>();
+    final apiProvider = context.read<ApiExpenseProvider>();
     final params = appProvider.screenParams;
     final mode = params?['mode'] ?? 'scan';
     final expenseId = params?['expenseId'] as String?;
+
+    if (mode == 'attach' && expenseId != null) {
+      // Upload to existing expense
+      await _uploadReceiptToExpense(_capturedImage!, expenseId);
+    } else {
+      // Set as pending receipt for new expense with OCR
+      setState(() {
+        _isProcessing = true;
+        _processingMessage = 'Preparing receipt...';
+      });
+
+      // Save to provider for OCR processing
+      if (kIsWeb) {
+        await apiProvider.setPendingReceiptImage(_capturedImage!);
+      } else {
+        await apiProvider.setPendingReceiptImage(File(_capturedImage!.path));
+      }
+
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        appProvider.showNotification(
+          'Receipt ready for processing',
+          type: 'success',
+        );
+        // Navigate to new expense screen with OCR mode
+        appProvider.navigateToWithParams('newExpense', {'fromScan': true});
+      }
+    }
+  }
+
+  void _captureImage() async {
+    final appProvider = context.read<AppProvider>();
 
     try {
       final XFile? image = await _picker.pickImage(
@@ -273,7 +423,15 @@ class _CameraScreenState extends State<CameraScreen> {
 
       if (image == null) return;
 
-      await _processImage(image, mode, expenseId);
+      // Read bytes for preview
+      final bytes = await image.readAsBytes();
+
+      if (mounted) {
+        setState(() {
+          _capturedImage = image;
+          _capturedImageBytes = bytes;
+        });
+      }
     } catch (e) {
       if (mounted) {
         appProvider.showNotification(
@@ -286,9 +444,6 @@ class _CameraScreenState extends State<CameraScreen> {
 
   void _pickFromGallery() async {
     final appProvider = context.read<AppProvider>();
-    final params = appProvider.screenParams;
-    final mode = params?['mode'] ?? 'scan';
-    final expenseId = params?['expenseId'] as String?;
 
     try {
       final XFile? image = await _picker.pickImage(
@@ -300,63 +455,21 @@ class _CameraScreenState extends State<CameraScreen> {
 
       if (image == null) return;
 
-      await _processImage(image, mode, expenseId);
+      // Read bytes for preview
+      final bytes = await image.readAsBytes();
+
+      if (mounted) {
+        setState(() {
+          _capturedImage = image;
+          _capturedImageBytes = bytes;
+        });
+      }
     } catch (e) {
       if (mounted) {
         appProvider.showNotification(
           'Failed to pick image: $e',
           type: 'error',
         );
-      }
-    }
-  }
-
-  Future<void> _processImage(XFile imageFile, String mode, String? expenseId) async {
-    if (!mounted) return;
-
-    final appProvider = context.read<AppProvider>();
-
-    if (appProvider.isApiMode) {
-      // API mode
-      if (mode == 'attach' && expenseId != null) {
-        // Upload receipt to existing expense
-        await _uploadReceiptToExpense(imageFile, expenseId);
-      } else {
-        // Store image for new expense creation
-        final apiProvider = context.read<ApiExpenseProvider>();
-        // For non-web, we can still use File for pending attachments
-        if (!kIsWeb) {
-          apiProvider.addPendingAttachment(File(imageFile.path));
-        }
-
-        setState(() {
-          _isProcessing = true;
-          _processingMessage = 'Image captured successfully';
-        });
-
-        await Future.delayed(const Duration(milliseconds: 500));
-
-        if (mounted) {
-          setState(() => _isProcessing = false);
-          appProvider.showNotification(
-            'Receipt captured. Creating expense...',
-            type: 'success',
-          );
-          appProvider.navigateTo('newExpense');
-        }
-      }
-    } else {
-      // Demo mode - simulate processing
-      setState(() {
-        _isProcessing = true;
-        _processingMessage = 'Processing receipt...';
-      });
-
-      await Future.delayed(const Duration(seconds: 2));
-
-      if (mounted) {
-        setState(() => _isProcessing = false);
-        appProvider.navigateTo('newExpense');
       }
     }
   }
@@ -377,15 +490,28 @@ class _CameraScreenState extends State<CameraScreen> {
       final bytes = await imageFile.readAsBytes();
       final fileName = imageFile.name;
 
-      final success = await apiProvider.uploadReceipt(expenseId, bytes, fileName);
+      final uploadResult = await apiProvider.uploadReceipt(
+        expenseId: expenseId,
+        file: bytes,
+        fileName: fileName,
+      );
 
       if (!mounted) return;
 
+      // Also trigger OCR after upload
+      if (uploadResult != null) {
+        setState(() {
+          _processingMessage = 'Processing receipt...';
+        });
+
+        await apiProvider.processReceiptOCR(uploadResult.id);
+      }
+
       setState(() => _isProcessing = false);
 
-      if (success) {
+      if (uploadResult != null) {
         appProvider.showNotification(
-          'Receipt uploaded successfully',
+          'Receipt uploaded and processed',
           type: 'success',
         );
         appProvider.goBack();

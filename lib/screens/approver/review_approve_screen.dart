@@ -52,6 +52,9 @@ class _ReviewApproveScreenState extends State<ReviewApproveScreen> {
     await Future.wait([
       apiProvider.fetchApprovalInbox(refresh: true),
       apiProvider.fetchInboxSummary(),
+      // Pre-load expense list so detail screen can look up vendor/dept/cost center
+      // without needing GET /api/v1/expenses/{id} which 403s for manager role
+      apiProvider.fetchExpenses(refresh: true, pageSize: 100),
     ]);
     // Populate requester info for tasks with empty names
     await apiProvider.populateRequesterInfo();
