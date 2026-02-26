@@ -46,6 +46,23 @@ class ApprovalService {
     }
   }
 
+  /// Get a single approval task by ID
+  /// GET /api/v1/approvals/{id}
+  Future<ApiResult<ApprovalTaskDTO>> getTask(String taskId) async {
+    try {
+      final response = await _dio.get('/api/v1/approvals/$taskId');
+      final data = response.data;
+      // Response structure: { "task": { "Body": { ...actual fields... } } }
+      final taskWrapper = data is Map && data.containsKey('task') ? data['task'] : data;
+      final taskData = taskWrapper is Map && taskWrapper.containsKey('Body')
+          ? taskWrapper['Body']
+          : taskWrapper;
+      return ApiResult.success(ApprovalTaskDTO.fromJson(taskData));
+    } on DioException catch (e) {
+      return ApiResult.fromDioError(e);
+    }
+  }
+
   /// Approve a task
   Future<ApiResult<ApprovalTaskDTO>> approve(
     String taskId, {

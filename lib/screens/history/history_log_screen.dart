@@ -206,7 +206,6 @@ class _HistoryLogScreenState extends State<HistoryLogScreen> {
       final apiProvider = context.read<ApiExpenseProvider>();
       final authProvider = context.read<AuthProvider>();
 
-      // Set user context for proper filtering (actorId for non-admin)
       if (authProvider.user != null) {
         apiProvider.setUserContext(
           userId: authProvider.user!.id,
@@ -215,8 +214,13 @@ class _HistoryLogScreenState extends State<HistoryLogScreen> {
         );
       }
 
-      // Fetch audit log / activity history from API
-      await apiProvider.fetchAuditLog(targetType: 'expense');
+      // Managers see their team's approval tasks; regular users see their own expenses
+      final isApprover = appProvider.userCapabilities.canApprove;
+      if (isApprover) {
+        await apiProvider.fetchApprovalInbox();
+      } else {
+        await apiProvider.fetchExpenses();
+      }
     }
     _isInitialized = true;
   }
@@ -236,49 +240,49 @@ class _HistoryLogScreenState extends State<HistoryLogScreen> {
     return Consumer2<AppProvider, ApiExpenseProvider>(
       builder: (context, appProvider, apiProvider, _) {
         final isApprover = appProvider.userCapabilities.canApprove;
-        final auditLogs = apiProvider.auditLogs;
-        final isLoading = apiProvider.isLoadingAuditLog;
+        final isLoading = apiProvider.isLoading;
+        final itemCount = isApprover
+            ? apiProvider.approvalTasks.length
+            : apiProvider.expenses.length;
 
         return Scaffold(
           backgroundColor: const Color(0xFFF2F2F7),
           body: SafeArea(
             child: Column(
               children: [
-                _buildHeader(context, isApprover, auditLogs.length),
+                _buildHeader(context, isApprover, itemCount),
                 Expanded(
-                  child: isLoading && auditLogs.isEmpty
+                  child: isLoading && itemCount == 0
                       ? const Center(child: CupertinoActivityIndicator(radius: 14))
-                      : auditLogs.isEmpty
+                      : itemCount == 0
                           ? _buildEmptyState()
                           : RefreshIndicator(
-                              onRefresh: () => apiProvider.fetchAuditLog(),
+                              onRefresh: () => isApprover
+                                  ? apiProvider.fetchApprovalInbox()
+                                  : apiProvider.fetchExpenses(),
                               child: ListView.builder(
                                 padding: const EdgeInsets.all(20),
-                                itemCount: auditLogs.length,
+                                itemCount: itemCount,
                                 itemBuilder: (context, index) {
-                                  final item = auditLogs[index];
-                                  return _AuditLogItem(
-                                    item: item,
-                                    onTap: () async {
-                                      // Only navigate if user has permission and it's an expense
-                                      if (item.targetType == 'expense' && item.hasPermission && item.expense != null) {
-                                        apiProvider.setSelectedExpense(item.expense!);
-                                        if (context.mounted) {
-                                          context.read<AppProvider>().navigateTo('transactionDetail');
-                                        }
-                                      } else if (!item.hasPermission) {
-                                        // Show permission error
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            const SnackBar(
-                                              content: Text('You do not have permission to view this expense'),
-                                              backgroundColor: Color(0xFFFF3B30),
-                                            ),
-                                          );
-                                        }
-                                      }
-                                    },
-                                  );
+                                  if (isApprover) {
+                                    final task = apiProvider.approvalTasks[index];
+                                    return _ApprovalTaskHistoryItem(
+                                      task: task,
+                                      onTap: () {
+                                        apiProvider.setSelectedApprovalTask(task);
+                                        context.read<AppProvider>().navigateTo('approverExpenseDetail');
+                                      },
+                                    );
+                                  } else {
+                                    final expense = apiProvider.expenses[index];
+                                    return _ApiHistoryItem(
+                                      expense: expense,
+                                      onTap: () {
+                                        apiProvider.setSelectedExpense(expense);
+                                        context.read<AppProvider>().navigateTo('transactionDetail');
+                                      },
+                                    );
+                                  }
                                 },
                               ),
                             ),
@@ -1307,6 +1311,197 @@ class _AuditLogItem extends StatelessWidget {
                       const Icon(Icons.chevron_right, size: 16, color: Color(0xFFAEAEB2))
                     else
                       Icon(CupertinoIcons.lock_fill, size: 14, color: Colors.grey[400]),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// History item for manager view — renders an ApprovalTaskDTO from GET /api/v1/approvals/inbox
+class _ApprovalTaskHistoryItem extends StatelessWidget {
+  final ApprovalTaskDTO task;
+  final VoidCallback onTap;
+
+  const _ApprovalTaskHistoryItem({required this.task, required this.onTap});
+
+  Map<String, dynamic> _getDecisionStyle() {
+    if (task.isApproved) {
+      return {'label': 'Approved', 'color': const Color(0xFF30D158)};
+    }
+    if (task.isRejected) {
+      return {'label': 'Rejected', 'color': const Color(0xFFFF3B30)};
+    }
+    if (task.isReturned) {
+      return {'label': 'Returned', 'color': const Color(0xFF007AFF)};
+    }
+    return {'label': 'Pending', 'color': const Color(0xFFFF9500)};
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final decisionStyle = _getDecisionStyle();
+    final dateTime = formatActivityDateTime(task.createdAt);
+    final Color color = decisionStyle['color'];
+
+    final name = task.requesterName.isNotEmpty ? task.requesterName : 'Unknown';
+    final nameParts = name.split(' ');
+    final initials = nameParts.length >= 2
+        ? '${nameParts[0][0]}${nameParts[1][0]}'.toUpperCase()
+        : name[0].toUpperCase();
+
+    final categoryIcon = task.categoryIcon ?? '📋';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Avatar with initials
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF5856D6).withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Text(
+                          initials,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF5856D6),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // Requester name
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1C1C1E),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (task.requesterEmail.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              task.requesterEmail,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFFAEAEB2),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    // Amount + Decision badge
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          formatRupiahCompact(task.amount),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1C1C1E),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: color.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            decisionStyle['label'],
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: color,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                const Divider(height: 1, color: Color(0xFFE5E5EA)),
+                const SizedBox(height: 10),
+                // Bottom row: category icon, category • merchant, date
+                Row(
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F2F7),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Center(
+                        child: Text(categoryIcon, style: const TextStyle(fontSize: 14)),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${task.category} • ${task.merchant}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF8E8E93),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Text(
+                      dateTime['date'] ?? '',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFFAEAEB2),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.chevron_right, size: 16, color: Color(0xFFAEAEB2)),
                   ],
                 ),
               ],

@@ -1,8 +1,18 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../services/services.dart';
-import '../models/expense.dart';
-import '../models/financial_instrument.dart';
+import '../services/models/corporate_card_dto.dart';
+
+/// OCR Processing State
+enum OCRProcessingState {
+  idle,
+  creatingDraft,
+  uploading,
+  processingOCR,
+  completed,
+  failed,
+}
 
 /// API-backed Expense Provider - uses real backend API
 class ApiExpenseProvider extends ChangeNotifier {
@@ -11,6 +21,7 @@ class ApiExpenseProvider extends ChangeNotifier {
   final CategoryService _categoryService = CategoryService();
   final AuthService _authService = AuthService();
   final BudgetService _budgetService = BudgetService();
+  final ReceiptService _receiptService = ReceiptService();
 
   // User cache for requester lookups
   final Map<String, UserProfile> _userCache = {};
@@ -45,13 +56,23 @@ class ApiExpenseProvider extends ChangeNotifier {
   // Selection state
   ExpenseDTO? _selectedExpense;
   ApprovalTaskDTO? _selectedApprovalTask;
+  List<ReceiptDTO> _approvalReceipts = [];
+  String? _latestApprovalComment;
 
   // Bulk selection state
   bool _isSelectionMode = false;
   final Set<String> _selectedTaskIds = {};
 
   // Form state
-  List<File> _pendingAttachments = [];
+  List<dynamic> _pendingAttachments = []; // Can be File, Uint8List, or XFile
+
+  // OCR Processing state
+  OCRProcessingState _ocrState = OCRProcessingState.idle;
+  dynamic _pendingReceiptImage; // XFile, File, or Uint8List for preview
+  Uint8List? _pendingReceiptBytes; // Bytes for image preview
+  ReceiptDTO? _ocrResult; // OCR result with extracted data
+  String? _tempDraftExpenseId; // Draft expense created for OCR
+  String? _ocrError; // Error message if OCR fails
 
   // Filter state
   ExpenseListParams _currentFilters = ExpenseListParams();
@@ -89,8 +110,22 @@ class ApiExpenseProvider extends ChangeNotifier {
 
   ExpenseDTO? get selectedExpense => _selectedExpense;
   ApprovalTaskDTO? get selectedApprovalTask => _selectedApprovalTask;
+  List<ReceiptDTO> get approvalReceipts => _approvalReceipts;
+  String? get latestApprovalComment => _latestApprovalComment;
 
-  List<File> get pendingAttachments => List.unmodifiable(_pendingAttachments);
+  List<dynamic> get pendingAttachments => List.unmodifiable(_pendingAttachments);
+
+  // OCR getters
+  OCRProcessingState get ocrState => _ocrState;
+  dynamic get pendingReceiptImage => _pendingReceiptImage;
+  Uint8List? get pendingReceiptBytes => _pendingReceiptBytes;
+  ReceiptDTO? get ocrResult => _ocrResult;
+  String? get tempDraftExpenseId => _tempDraftExpenseId;
+  String? get ocrError => _ocrError;
+  bool get isOCRProcessing => _ocrState != OCRProcessingState.idle &&
+                               _ocrState != OCRProcessingState.completed &&
+                               _ocrState != OCRProcessingState.failed;
+  bool get hasOCRResult => _ocrResult != null && _ocrResult!.ocrData != null;
 
   int get activeCardIndex => _activeCardIndex;
   String get instrumentFilter => _instrumentFilter;
@@ -228,12 +263,103 @@ class ApiExpenseProvider extends ChangeNotifier {
     _isLoading = false;
     if (result.isSuccess) {
       _selectedExpense = result.data;
+      // Fetch receipts separately to ensure they're loaded
+      await refreshReceipts(id);
       notifyListeners();
       return result.data;
     } else {
-      _error = result.error?.toString();
+      // 403 is expected when manager views a subordinate's expense via GET /api/v1/expenses/{id}.
+      // Don't surface this as a UI error — the screen already has data from the list response.
+      if (result.error?.isForbidden != true) {
+        _error = result.error?.toString();
+      }
       notifyListeners();
       return null;
+    }
+  }
+
+  /// Refresh receipts for an expense
+  /// This ensures receipts are properly loaded even if not included in getExpense response
+  Future<void> refreshReceipts(String expenseId) async {
+    try {
+      print('DEBUG: refreshReceipts called for expenseId: $expenseId');
+      print('DEBUG: _selectedExpenseId: ${_selectedExpense?.id}');
+
+      final result = await _receiptService.listReceipts(expenseId);
+
+      print('DEBUG: Receipts API result success: ${result.isSuccess}');
+      print('DEBUG: Receipts API data length: ${result.data?.length ?? 0}');
+
+      if (result.isSuccess) {
+        print('DEBUG: Receipts data: $result.data');
+
+        if (_selectedExpense == null) {
+          print('DEBUG: _selectedExpense is null, cannot update receipts');
+          return;
+        }
+
+        print('DEBUG: ID match: ${_selectedExpense!.id == expenseId}');
+
+        // Update the selected expense with the fetched receipts
+        _selectedExpense = ExpenseDTO(
+          id: _selectedExpense!.id,
+          organizationId: _selectedExpense!.organizationId,
+          entityId: _selectedExpense!.entityId,
+          requesterId: _selectedExpense!.requesterId,
+          requesterName: _selectedExpense!.requesterName,
+          originalAmount: _selectedExpense!.originalAmount,
+          originalCurrency: _selectedExpense!.originalCurrency,
+          baseAmount: _selectedExpense!.baseAmount,
+          baseCurrency: _selectedExpense!.baseCurrency,
+          exchangeRate: _selectedExpense!.exchangeRate,
+          categoryId: _selectedExpense!.categoryId,
+          categoryName: _selectedExpense!.categoryName,
+          categoryCode: _selectedExpense!.categoryCode,
+          categoryIcon: _selectedExpense!.categoryIcon,
+          categoryFields: _selectedExpense!.categoryFields,
+          departmentId: _selectedExpense!.departmentId,
+          departmentName: _selectedExpense!.departmentName,
+          costCenterId: _selectedExpense!.costCenterId,
+          costCenterName: _selectedExpense!.costCenterName,
+          expenseType: _selectedExpense!.expenseType,
+          expenseDate: _selectedExpense!.expenseDate,
+          status: _selectedExpense!.status,
+          statusName: _selectedExpense!.statusName,
+          statusReason: _selectedExpense!.statusReason,
+          receiptStatus: _selectedExpense!.receiptStatus,
+          receiptStatusName: _selectedExpense!.receiptStatusName,
+          receiptRequired: _selectedExpense!.receiptRequired,
+          receiptDueDate: _selectedExpense!.receiptDueDate,
+          policyStatus: _selectedExpense!.policyStatus,
+          policyStatusName: _selectedExpense!.policyStatusName,
+          policyFlags: _selectedExpense!.policyFlags,
+          workflowRunId: _selectedExpense!.workflowRunId,
+          submittedAt: _selectedExpense!.submittedAt,
+          approvedAt: _selectedExpense!.approvedAt,
+          completedAt: _selectedExpense!.completedAt,
+          requiresEmployeeRepayment: _selectedExpense!.requiresEmployeeRepayment,
+          repaymentAmount: _selectedExpense!.repaymentAmount,
+          repaymentStatus: _selectedExpense!.repaymentStatus,
+          description: _selectedExpense!.description,
+          vendorId: _selectedExpense!.vendorId,
+          vendorName: _selectedExpense!.vendorName,
+          metadata: _selectedExpense!.metadata,
+          createdAt: _selectedExpense!.createdAt,
+          updatedAt: _selectedExpense!.updatedAt,
+          createdBy: _selectedExpense!.createdBy,
+          receipts: result.data, // Use the fetched receipts
+        );
+
+        print('DEBUG: Updated expense receipts count: ${_selectedExpense!.receipts?.length ?? 0}');
+        notifyListeners();
+
+        // Add a small delay to ensure UI has time to rebuild
+        await Future.delayed(const Duration(milliseconds: 100));
+      } else {
+        print('DEBUG: Receipts API failed: ${result.error}');
+      }
+    } catch (e) {
+      print('ERROR: Failed to refresh receipts: $e');
     }
   }
 
@@ -399,23 +525,155 @@ class ApiExpenseProvider extends ChangeNotifier {
     }
   }
 
-  /// Upload receipt (supports both web and mobile)
-  Future<bool> uploadReceipt(String expenseId, List<int> bytes, String fileName) async {
+  // ============ Receipt Operations ============
+
+  /// Upload receipt for an expense (supports both File and Uint8List)
+  Future<ReceiptDTO?> uploadReceipt({
+    required String expenseId,
+    required dynamic file, // File on mobile, Uint8List on web
+    String? fileName,
+  }) async {
     _isSubmitting = true;
     _error = null;
     notifyListeners();
 
-    final result = await _expenseService.uploadReceipt(expenseId, bytes, fileName);
+    final result = await _receiptService.uploadReceipt(
+      expenseId: expenseId,
+      file: file,
+      fileName: fileName,
+    );
 
     _isSubmitting = false;
     if (result.isSuccess) {
-      // Refresh expense to get updated receipts
+      // Refresh expense to get updated receipts list
       await getExpense(expenseId);
+      notifyListeners();
+      return result.data;
+    } else {
+      _error = result.error?.toString();
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Download receipt file
+  Future<ReceiptDownload?> downloadReceipt(String receiptId) async {
+    _isSubmitting = true;
+    _error = null;
+    notifyListeners();
+
+    final result = await _receiptService.downloadReceipt(receiptId);
+
+    _isSubmitting = false;
+    if (result.isSuccess) {
+      notifyListeners();
+      return result.data;
+    } else {
+      _error = result.error?.toString();
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// List all receipts for an expense
+  Future<List<ReceiptDTO>> listReceipts(String expenseId) async {
+    final result = await _receiptService.listReceipts(expenseId);
+
+    if (result.isSuccess) {
+      return result.data ?? [];
+    } else {
+      _error = result.error?.toString();
+      notifyListeners();
+      return [];
+    }
+  }
+
+  /// Process OCR for a receipt
+  ///
+  /// Triggers Gemini Vision API to extract data from the receipt image.
+  /// Returns the receipt with OCR data populated.
+  Future<ReceiptDTO?> processReceiptOCR(String receiptId) async {
+    _isSubmitting = true;
+    _error = null;
+    notifyListeners();
+
+    print('DEBUG: Provider calling processOCR for receipt $receiptId');
+    final result = await _receiptService.processOCR(receiptId);
+
+    _isSubmitting = false;
+    if (result.isSuccess) {
+      print('DEBUG: OCR processed successfully');
+      print('DEBUG: OCR Data: ${result.data?.ocrData}');
+      notifyListeners();
+      return result.data;
+    } else {
+      _error = result.error?.toString();
+      print('ERROR: OCR processing failed: $_error');
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Get receipt by ID
+  ///
+  /// Fetches a specific receipt with its OCR data.
+  Future<ReceiptDTO?> getReceipt(String receiptId) async {
+    _isSubmitting = true;
+    _error = null;
+    notifyListeners();
+
+    final result = await _receiptService.getReceipt(receiptId);
+
+    _isSubmitting = false;
+    if (result.isSuccess) {
+      notifyListeners();
+      return result.data;
+    } else {
+      _error = result.error?.toString();
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Delete a receipt
+  Future<bool> deleteReceipt(String receiptId, String expenseId) async {
+    _isSubmitting = true;
+    _error = null;
+    notifyListeners();
+
+    final result = await _receiptService.deleteReceipt(receiptId);
+
+    _isSubmitting = false;
+    if (result.isSuccess) {
+      // Refresh expense to get updated receipts list
+      await getExpense(expenseId);
+      notifyListeners();
       return true;
     } else {
       _error = result.error?.toString();
       notifyListeners();
       return false;
+    }
+  }
+
+  /// Verify receipt (for approvers/finance)
+  Future<ReceiptDTO?> verifyReceipt(String receiptId, String expenseId) async {
+    _isSubmitting = true;
+    _error = null;
+    notifyListeners();
+
+    final result = await _receiptService.verifyReceipt(receiptId);
+
+    _isSubmitting = false;
+    if (result.isSuccess) {
+      // Refresh expense to get updated receipt status
+      await getExpense(expenseId);
+      notifyListeners();
+      return result.data;
+    } else {
+      _error = result.error?.toString();
+      notifyListeners();
+      return null;
     }
   }
 
@@ -1005,11 +1263,13 @@ class ApiExpenseProvider extends ChangeNotifier {
     required String budgetId,
     required double amount,
     String currency = 'IDR',
+    String expenseType = 'reimbursement',
   }) async {
     final result = await _budgetService.checkBudget(
       budgetId: budgetId,
       expenseAmount: amount,
       expenseCurrency: currency,
+      expenseType: expenseType,
     );
 
     if (result.isSuccess) {
@@ -1038,6 +1298,7 @@ class ApiExpenseProvider extends ChangeNotifier {
     }
     return null;
   }
+
 
   /// Fetch all budget analytics data for a budget
   Future<void> fetchBudgetAnalytics(String budgetId) async {
@@ -1083,17 +1344,69 @@ class ApiExpenseProvider extends ChangeNotifier {
 
   void setSelectedExpense(ExpenseDTO? expense) {
     _selectedExpense = expense;
+    _latestApprovalComment = null;
     notifyListeners();
   }
 
   void setSelectedApprovalTask(ApprovalTaskDTO? task) {
     _selectedApprovalTask = task;
+    _approvalReceipts = [];
     notifyListeners();
+  }
+
+  /// Fetch receipts for an expense being reviewed by an approver.
+  /// Uses GET /api/v1/expenses/{expenseId}/receipts directly.
+  Future<void> fetchReceiptsForApprovalTask(String expenseId) async {
+    final receipts = await listReceipts(expenseId);
+    _approvalReceipts = receipts;
+    notifyListeners();
+  }
+
+  /// Fetch the latest reject/return comment for an expense from approval history.
+  /// Populates [latestApprovalComment] so the UI can display the approver's reason.
+  Future<void> fetchLatestApprovalComment(String expenseId) async {
+    final result = await _approvalService.getHistory(
+      targetType: 'expense',
+      targetId: expenseId,
+    );
+    if (!result.isSuccess) return;
+
+    final history = result.data!.data;
+    // Find the most recent rejected or returned entry that has a comment
+    final relevant = history.where((h) {
+      final action = h.action.toLowerCase();
+      return (action == 'rejected' || action == 'returned' ||
+              action == 'reject' || action == 'return') &&
+          h.comment != null &&
+          h.comment!.isNotEmpty;
+    }).toList();
+
+    if (relevant.isNotEmpty) {
+      _latestApprovalComment = relevant.first.comment;
+      notifyListeners();
+    }
+  }
+
+  /// Fetch a single approval task by its ID using the approver-safe endpoint.
+  /// Uses GET /api/v1/approvals/{id} instead of GET /api/v1/expenses/{id}
+  /// to avoid 403 for manager/approver roles.
+  Future<void> fetchApprovalTaskDetail(String taskId) async {
+    final result = await _approvalService.getTask(taskId);
+    if (result.isSuccess) {
+      final task = result.data!;
+      _selectedApprovalTask = task;
+      // If the API embedded the full expense in the task response, use it
+      if (task.expense != null) {
+        _selectedExpense = task.expense;
+      }
+      notifyListeners();
+    }
   }
 
   // ============ Attachment Methods ============
 
-  void addPendingAttachment(File file) {
+  void addPendingAttachment(dynamic file) {
+    // Can accept File, Uint8List, XFile, etc.
     _pendingAttachments.add(file);
     notifyListeners();
   }
@@ -1108,6 +1421,213 @@ class ApiExpenseProvider extends ChangeNotifier {
   void clearPendingAttachments() {
     _pendingAttachments.clear();
     notifyListeners();
+  }
+
+  // ============ OCR Processing Methods ============
+
+  /// Set pending receipt image for preview and OCR processing
+  Future<void> setPendingReceiptImage(dynamic image) async {
+    _pendingReceiptImage = image;
+    _ocrState = OCRProcessingState.idle;
+    _ocrResult = null;
+    _ocrError = null;
+
+    // Read bytes for preview
+    try {
+      if (image is File) {
+        _pendingReceiptBytes = await image.readAsBytes();
+      } else if (image is Uint8List) {
+        _pendingReceiptBytes = image;
+      } else if (image.runtimeType.toString().contains('XFile')) {
+        // XFile from image_picker
+        final xFile = image as dynamic;
+        _pendingReceiptBytes = await xFile.readAsBytes() as Uint8List;
+      }
+    } catch (e) {
+      print('ERROR: Failed to read receipt bytes: $e');
+    }
+
+    notifyListeners();
+  }
+
+  /// Clear all OCR state
+  void clearOCRState() {
+    _ocrState = OCRProcessingState.idle;
+    _pendingReceiptImage = null;
+    _pendingReceiptBytes = null;
+    _ocrResult = null;
+    _tempDraftExpenseId = null;
+    _ocrError = null;
+    notifyListeners();
+  }
+
+  /// Process receipt with OCR: Create draft → Upload → OCR → Return result
+  ///
+  /// This method handles the complete flow:
+  /// 1. Create a minimal draft expense
+  /// 2. Upload the receipt to that expense
+  /// 3. Trigger OCR processing
+  /// 4. Return the OCR result for auto-fill
+  Future<ReceiptDTO?> processReceiptWithOCR({
+    required String categoryId,
+    String? departmentId,
+  }) async {
+    if (_pendingReceiptImage == null && _pendingReceiptBytes == null) {
+      _ocrError = 'No receipt image to process';
+      notifyListeners();
+      return null;
+    }
+
+    try {
+      // Step 1: Create draft expense
+      _ocrState = OCRProcessingState.creatingDraft;
+      _ocrError = null;
+      notifyListeners();
+
+      print('DEBUG OCR: Creating draft expense...');
+      final draftExpense = await createExpense(
+        amount: 0, // Will be filled by OCR
+        categoryId: categoryId,
+        expenseDate: DateTime.now(),
+        description: 'Receipt scan - pending OCR',
+        expenseType: 'reimbursement',
+        departmentId: departmentId,
+        submitForApproval: false,
+      );
+
+      if (draftExpense == null) {
+        throw Exception(_error ?? 'Failed to create draft expense');
+      }
+
+      _tempDraftExpenseId = draftExpense.id;
+      print('DEBUG OCR: Draft expense created: ${draftExpense.id}');
+
+      // Step 2: Upload receipt
+      _ocrState = OCRProcessingState.uploading;
+      notifyListeners();
+
+      print('DEBUG OCR: Uploading receipt...');
+
+      // Prepare file data
+      dynamic fileData;
+      String fileName;
+
+      if (_pendingReceiptImage is File) {
+        fileData = _pendingReceiptImage;
+        fileName = (_pendingReceiptImage as File).path.split('/').last.split('\\').last;
+      } else if (_pendingReceiptBytes != null) {
+        fileData = _pendingReceiptBytes;
+        fileName = 'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      } else if (_pendingReceiptImage.runtimeType.toString().contains('XFile')) {
+        final xFile = _pendingReceiptImage as dynamic;
+        fileData = await xFile.readAsBytes();
+        fileName = xFile.name as String;
+      } else {
+        throw Exception('Unsupported file type');
+      }
+
+      final uploadResult = await uploadReceipt(
+        expenseId: draftExpense.id,
+        file: fileData,
+        fileName: fileName,
+      );
+
+      if (uploadResult == null) {
+        throw Exception(_error ?? 'Failed to upload receipt');
+      }
+
+      print('DEBUG OCR: Receipt uploaded: ${uploadResult.id}');
+
+      // Step 3: Trigger OCR
+      _ocrState = OCRProcessingState.processingOCR;
+      notifyListeners();
+
+      print('DEBUG OCR: Processing OCR...');
+      final ocrResult = await processReceiptOCR(uploadResult.id);
+
+      if (ocrResult == null) {
+        throw Exception(_error ?? 'OCR processing failed');
+      }
+
+      print('DEBUG OCR: OCR completed!');
+      print('DEBUG OCR: Merchant: ${ocrResult.ocrData?['merchantName']}');
+      print('DEBUG OCR: Amount: ${ocrResult.ocrData?['totalAmount']}');
+      print('DEBUG OCR: Date: ${ocrResult.ocrData?['transactionDate']}');
+
+      // Step 4: Success!
+      _ocrState = OCRProcessingState.completed;
+      _ocrResult = ocrResult;
+      notifyListeners();
+
+      return ocrResult;
+    } catch (e) {
+      print('ERROR OCR: $e');
+      _ocrState = OCRProcessingState.failed;
+      _ocrError = e.toString();
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Retry OCR processing after failure
+  Future<ReceiptDTO?> retryOCR({
+    required String categoryId,
+    String? departmentId,
+  }) async {
+    // If we have a temp draft, delete it first
+    if (_tempDraftExpenseId != null) {
+      try {
+        await deleteExpense(_tempDraftExpenseId!);
+      } catch (e) {
+        print('WARNING: Failed to delete temp draft: $e');
+      }
+      _tempDraftExpenseId = null;
+    }
+
+    // Reset state and retry
+    _ocrState = OCRProcessingState.idle;
+    _ocrResult = null;
+    _ocrError = null;
+    notifyListeners();
+
+    return processReceiptWithOCR(
+      categoryId: categoryId,
+      departmentId: departmentId,
+    );
+  }
+
+  /// Get OCR data field with null safety
+  dynamic getOCRField(String fieldName) {
+    return _ocrResult?.ocrData?[fieldName];
+  }
+
+  /// Get parsed amount from OCR
+  double? getOCRAmount() {
+    final amount = getOCRField('totalAmount');
+    if (amount == null) return null;
+    if (amount is num) return amount.toDouble();
+    if (amount is String) return double.tryParse(amount);
+    return null;
+  }
+
+  /// Get parsed date from OCR
+  DateTime? getOCRDate() {
+    final dateStr = getOCRField('transactionDate');
+    if (dateStr == null) return null;
+    if (dateStr is String) {
+      return DateTime.tryParse(dateStr);
+    }
+    return null;
+  }
+
+  /// Get merchant name from OCR
+  String? getOCRMerchantName() {
+    return getOCRField('merchantName')?.toString();
+  }
+
+  /// Get currency from OCR
+  String? getOCRCurrency() {
+    return getOCRField('currency')?.toString();
   }
 
   // ============ UI State Methods ============

@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
 import '../../providers/api_expense_provider.dart';
+import '../../providers/auth_provider.dart';
 import '../../services/services.dart';
 import '../../utils/formatters.dart';
 import '../../core/design_tokens.dart';
@@ -32,9 +33,22 @@ class _TransactionDetailScreenState extends State<TransactionDetailScreen> {
     final expense = apiProvider.selectedExpense;
 
     if (expense != null) {
+      // Skip GET /api/v1/expenses/{id} if this is someone else's expense.
+      // Managers viewing a subordinate's expense will 403 on this endpoint.
+      // The expense data from the list is already sufficient.
+      final currentUserId = context.read<AuthProvider>().user?.id;
+      final isOwnExpense = currentUserId == null || expense.requesterId == currentUserId;
+      if (!isOwnExpense) return;
+
       setState(() => _isLoadingDetail = true);
-      print('DEBUG: Fetching expense detail for ${expense.id}');
       await apiProvider.getExpense(expense.id);
+
+      // For rejected/returned expenses, fetch the approver's comment from history
+      final updated = apiProvider.selectedExpense;
+      if (updated != null && (updated.status == 6 || updated.status == 7)) {
+        await apiProvider.fetchLatestApprovalComment(updated.id);
+      }
+
       setState(() => _isLoadingDetail = false);
     }
   }
@@ -108,15 +122,10 @@ class _TransactionDetailScreenState extends State<TransactionDetailScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Debug logging
-                        if (isRejected || isReturned) Builder(
-                          builder: (context) {
-                            print('DEBUG Expense Detail: status=${expense.status}, statusReason="${expense.statusReason}"');
-                            return const SizedBox.shrink();
-                          },
-                        ),
-                        if (isRejected) _buildRejectedBanner(context, expense.statusReason),
-                        if (isReturned) _buildReturnedBanner(context, expense.statusReason),
+                        if (isRejected) _buildRejectedBanner(context,
+                            apiProvider.latestApprovalComment ?? expense.statusReason),
+                        if (isReturned) _buildReturnedBanner(context,
+                            apiProvider.latestApprovalComment ?? expense.statusReason),
                         // Only show Missing Receipt banner if user can actually attach
                         if (expense.missingReceipt && canEdit) _buildMissingReceiptBanner(context, expense.id, canAttach: true),
                         _buildRequesterSection(context, apiProvider, expense),
@@ -1274,83 +1283,114 @@ class _DetailRow extends StatelessWidget {
   }
 }
 
-class _ReceiptItem extends StatelessWidget {
+class _ReceiptItem extends StatefulWidget {
   final dynamic receipt;
   final bool isApi;
 
   const _ReceiptItem({required this.receipt, this.isApi = false});
 
   @override
-  Widget build(BuildContext context) {
-    String fileName;
-    String fileType;
+  State<_ReceiptItem> createState() => _ReceiptItemState();
+}
 
-    if (isApi) {
-      fileName = receipt.fileName ?? 'Receipt';
-      fileType = receipt.fileType ?? 'image/jpeg';
-    } else {
-      fileName = receipt.fileName ?? 'Receipt';
-      fileType = receipt.fileType ?? 'image/jpeg';
-    }
+class _ReceiptItemState extends State<_ReceiptItem> {
+  bool _isLoading = false;
+
+  Future<void> _openReceipt() async {
+    final receiptId = widget.receipt.id;
+    if (receiptId == null || receiptId.isEmpty) return;
+
+    setState(() => _isLoading = true);
+    // Give a brief moment for the loading indicator to render before navigation
+    await Future.delayed(const Duration(milliseconds: 150));
+    if (!mounted) return;
+
+    final appProvider = Provider.of<AppProvider>(context, listen: false);
+    appProvider.navigateToWithParams('receiptViewer', {'receiptId': receiptId});
+
+    // Reset loading state after navigation (in case user comes back)
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fileName = widget.receipt.fileName ?? 'Receipt';
+    final fileType = widget.receipt.fileType ?? 'image/jpeg';
 
     final isImage = fileType.startsWith('image/');
     final iconColor = isImage ? FintechColors.categoryBlue : FintechColors.categoryRed;
     final bgColor = isImage ? FintechColors.categoryBlueBg : FintechColors.categoryRedBg;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceVariant,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(AppRadius.md),
+    return GestureDetector(
+      onTap: _isLoading ? null : _openReceipt,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceVariant,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+              child: _isLoading
+                  ? Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: iconColor,
+                        ),
+                      ),
+                    )
+                  : Icon(
+                      isImage ? CupertinoIcons.photo : CupertinoIcons.doc_fill,
+                      color: iconColor,
+                      size: 22,
+                    ),
             ),
-            child: Icon(
-              isImage ? CupertinoIcons.photo : CupertinoIcons.doc_fill,
-              color: iconColor,
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  fileName,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    fileName,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  isImage ? 'Image' : 'PDF Document',
-                  style: TextStyle(
-                    fontSize: 12,
+                  const SizedBox(height: 2),
+                  Text(
+                    _isLoading ? 'Opening...' : (isImage ? 'Image' : 'PDF Document'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            _isLoading
+                ? const SizedBox(width: 20)
+                : Icon(
+                    CupertinoIcons.eye,
                     color: AppColors.textMuted,
+                    size: 20,
                   ),
-                ),
-              ],
-            ),
-          ),
-          Icon(
-            CupertinoIcons.eye,
-            color: AppColors.textMuted,
-            size: 20,
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

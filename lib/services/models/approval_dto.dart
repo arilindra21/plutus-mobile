@@ -330,22 +330,27 @@ class ApprovalHistoryDTO {
 
   factory ApprovalHistoryDTO.fromJson(Map<String, dynamic> json) {
     return ApprovalHistoryDTO(
-      id: json['id'] ?? '',
+      id: json['id'] ?? json['taskId'] ?? '',
       action: json['action'] ?? json['decision'] ?? 'unknown',
-      actorId: json['actor_id'] ?? json['approver_id'] ?? json['user_id'] ?? '',
-      actorName: json['actor_name'] ?? json['approver_name'] ?? json['user_name'] ?? 'Unknown',
-      actorEmail: json['actor_email'] ?? json['approver_email'],
-      expenseId: json['expense_id'] ?? '',
-      refId: json['ref_id'] ?? json['expense_ref_id'],
-      merchant: json['merchant'] ?? json['merchant_name'],
+      actorId: json['actor_id'] ?? json['approver_id'] ??
+          json['actorId'] ?? json['approverId'] ?? json['user_id'] ?? '',
+      actorName: json['actor_name'] ?? json['approver_name'] ??
+          json['actorName'] ?? json['approverName'] ?? json['user_name'] ?? 'Unknown',
+      actorEmail: json['actor_email'] ?? json['approver_email'] ??
+          json['actorEmail'] ?? json['approverEmail'],
+      expenseId: json['expense_id'] ?? json['expenseId'] ?? json['targetId'] ?? '',
+      refId: json['ref_id'] ?? json['expense_ref_id'] ?? json['refId'],
+      merchant: json['merchant'] ?? json['merchant_name'] ?? json['merchantName'],
       amount: (json['amount'] ?? 0).toDouble(),
       currency: json['currency'] ?? 'IDR',
-      category: json['category'] ?? json['category_name'],
-      categoryIcon: json['category_icon'],
+      category: json['category'] ?? json['category_name'] ?? json['categoryName'],
+      categoryIcon: json['category_icon'] ?? json['categoryIcon'],
       comment: json['comment'] ?? json['comments'],
       createdAt: json['created_at'] != null
           ? DateTime.parse(json['created_at'])
-          : DateTime.now(),
+          : json['decidedAt'] != null
+              ? DateTime.parse(json['decidedAt'])
+              : DateTime.now(),
     );
   }
 

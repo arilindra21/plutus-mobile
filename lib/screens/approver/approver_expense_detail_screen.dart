@@ -1,6 +1,8 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import '../../core/design_tokens.dart';
 import '../../providers/app_provider.dart';
 import '../../providers/api_expense_provider.dart';
@@ -29,10 +31,25 @@ class _ApproverExpenseDetailScreenState extends State<ApproverExpenseDetailScree
     final apiProvider = context.read<ApiExpenseProvider>();
     final task = apiProvider.selectedApprovalTask;
 
-    // If task has no expense data and we have an expenseId, fetch it
-    if (task != null && task.expense == null && task.expenseId.isNotEmpty) {
-      await apiProvider.getExpense(task.expenseId);
+    if (task == null || task.expenseId.isEmpty) return;
+
+    // Step 1: Look up the expense from the pre-loaded expense list
+    // (loaded in review screen initState via fetchExpenses).
+    // This gives us vendor, dept, cost center, expenseType — all inaccessible
+    // via GET /api/v1/expenses/{id} (403 for manager role).
+    final expenseFromList = apiProvider.expenses
+        .where((e) => e.id == task.expenseId)
+        .firstOrNull;
+    if (expenseFromList != null) {
+      apiProvider.setSelectedExpense(expenseFromList);
     }
+
+    // Step 2: Fetch approval task detail for authorization/stage/policy info
+    // Step 3: Fetch receipts using the expense ID
+    await Future.wait([
+      apiProvider.fetchApprovalTaskDetail(task.id),
+      apiProvider.fetchReceiptsForApprovalTask(task.expenseId),
+    ]);
   }
 
   @override
@@ -66,13 +83,12 @@ class _ApproverExpenseDetailScreenState extends State<ApproverExpenseDetailScree
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _buildSubmitterInfo(task, expense),
-                      // Note: Missing Receipt Banner removed - approvers cannot attach receipts
-                      // Only the expense owner can see and act on missing receipt warnings
+                      // Show policy flags/warnings to approver for awareness
+                      if (expense != null) _buildPolicyFlags(expense),
                       _buildAmountCard(task, expense),
                       _buildExpenseDetails(task, expense, context.read<ApiExpenseProvider>()),
                       // Receipts Section
-                      if (expense != null)
-                        _buildReceiptsSection(expense),
+                      _buildReceiptsSection(apiProvider),
                       _buildApprovalTrail(task, expense),
                       const SizedBox(height: AppSpacing.xl),
                     ],
@@ -138,6 +154,86 @@ class _ApproverExpenseDetailScreenState extends State<ApproverExpenseDetailScree
             child: const Icon(Icons.menu, color: Colors.white),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ReceiptThumbnailWidget extends StatefulWidget {
+  final ReceiptDTO receipt;
+  final VoidCallback onTap;
+
+  const _ReceiptThumbnailWidget({
+    required this.receipt,
+    required this.onTap,
+  });
+
+  @override
+  State<_ReceiptThumbnailWidget> createState() => _ReceiptThumbnailWidgetState();
+}
+
+class _ReceiptThumbnailWidgetState extends State<_ReceiptThumbnailWidget> {
+  Uint8List? _imageData;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThumbnail();
+  }
+
+  Future<void> _loadThumbnail() async {
+    final receipt = widget.receipt;
+    final fileName = receipt.fileName ?? '';
+    final isImage = receipt.fileType?.contains('image') == true ||
+        fileName.toLowerCase().endsWith('.jpg') ||
+        fileName.toLowerCase().endsWith('.jpeg') ||
+        fileName.toLowerCase().endsWith('.png');
+
+    final id = receipt.id;
+    if (isImage && id != null && id.isNotEmpty) {
+      final result = await ReceiptService().downloadReceipt(id);
+      if (mounted && result.isSuccess) {
+        setState(() => _imageData = result.data!.data);
+      }
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fileName = widget.receipt.fileName ?? '';
+    final isPdf = fileName.toLowerCase().endsWith('.pdf');
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: Container(
+        width: 80,
+        height: 80,
+        margin: const EdgeInsets.only(right: AppSpacing.sm),
+        decoration: BoxDecoration(
+          color: AppColors.bgSubtle,
+          borderRadius: AppRadius.borderRadiusMd,
+          border: Border.all(color: AppColors.borderDefault),
+        ),
+        child: ClipRRect(
+          borderRadius: AppRadius.borderRadiusMd,
+          child: _loading
+              ? const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : _imageData != null
+                  ? Image.memory(_imageData!, fit: BoxFit.cover)
+                  : Icon(
+                      isPdf ? CupertinoIcons.doc_text_fill : CupertinoIcons.doc,
+                      size: 32,
+                      color: isPdf ? FintechColors.categoryRed : FintechColors.categoryBlue,
+                    ),
+        ),
       ),
     );
   }
@@ -354,6 +450,146 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
     );
   }
 
+  Widget _buildPolicyFlags(ExpenseDTO expense) {
+    // Show policy flags if any exist
+    final hasFlags = expense.policyFlags != null && expense.policyFlags!.isNotEmpty;
+    // Use the actually-fetched approvalReceipts as the authoritative source.
+    // expense.missingReceipt checks expense.receipts which is empty in list-API responses.
+    final approvalReceipts = context.read<ApiExpenseProvider>().approvalReceipts;
+    final hasMissingReceipt = expense.missingReceipt && approvalReceipts.isEmpty;
+
+    if (!hasFlags && !hasMissingReceipt) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.md),
+      child: Column(
+        children: [
+          // Missing Receipt Warning
+          if (hasMissingReceipt)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AppSpacing.md),
+              margin: EdgeInsets.only(bottom: hasFlags ? AppSpacing.sm : 0),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withOpacity(0.1),
+                border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+                borderRadius: AppRadius.borderRadiusMd,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    CupertinoIcons.exclamationmark_triangle_fill,
+                    size: 20,
+                    color: AppColors.warning,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Missing Receipt',
+                          style: AppTypography.bodyMedium.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.warning,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'This expense requires a receipt to be attached',
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Policy Flags
+          if (hasFlags)
+            ...expense.policyFlags!.map((flag) {
+              Color flagColor;
+              IconData flagIcon;
+
+              switch (flag.severity.toLowerCase()) {
+                case 'error':
+                  flagColor = AppColors.statusRejected;
+                  flagIcon = CupertinoIcons.xmark_circle_fill;
+                  break;
+                case 'warning':
+                  flagColor = AppColors.warning;
+                  flagIcon = CupertinoIcons.exclamationmark_triangle_fill;
+                  break;
+                default:
+                  flagColor = FintechColors.categoryBlue;
+                  flagIcon = CupertinoIcons.info_circle_fill;
+              }
+
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(AppSpacing.md),
+                margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: flagColor.withOpacity(0.1),
+                  border: Border.all(color: flagColor.withOpacity(0.3)),
+                  borderRadius: AppRadius.borderRadiusMd,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      flagIcon,
+                      size: 20,
+                      color: flagColor,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            flag.name,
+                            style: AppTypography.bodyMedium.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: flagColor,
+                            ),
+                          ),
+                          if (flag.message != null && flag.message!.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              flag.message!,
+                              style: AppTypography.bodySmall.copyWith(
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                          if (flag.resolution != null && flag.resolution!.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Resolution: ${flag.resolution}',
+                              style: AppTypography.bodySmall.copyWith(
+                                color: AppColors.textSecondary,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAmountCard(ApprovalTaskDTO task, ExpenseDTO? expense) {
     // Get amount - prefer task, then expense
     double amount = task.amount;
@@ -493,10 +729,10 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
   // Note: _buildMissingReceiptBanner removed - approvers cannot attach receipts
   // Only expense owners can see and act on missing receipt warnings
 
-  Widget _buildReceiptsSection(ExpenseDTO expense) {
-    final receipts = expense.receipts;
-    final hasReceipts = receipts != null && receipts.isNotEmpty;
-    final receiptCount = receipts?.length ?? 0;
+  Widget _buildReceiptsSection(ApiExpenseProvider apiProvider) {
+    final receipts = apiProvider.approvalReceipts;
+    final hasReceipts = receipts.isNotEmpty;
+    final receiptCount = receipts.length;
 
     return Container(
       margin: const EdgeInsets.all(AppSpacing.lg),
@@ -604,53 +840,64 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
       iconColor = FintechColors.categoryRed;
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: AppColors.bgSubtle,
-        borderRadius: AppRadius.borderRadiusMd,
-        border: Border.all(color: AppColors.borderDefault),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.1),
-              borderRadius: AppRadius.borderRadiusSm,
+    void openReceipt() {
+      final receiptId = receipt.id;
+      if (receiptId != null && receiptId.isNotEmpty) {
+        Provider.of<AppProvider>(context, listen: false)
+            .navigateToWithParams('receiptViewer', {'receiptId': receiptId});
+      }
+    }
+
+    return GestureDetector(
+      onTap: openReceipt,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+        padding: const EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          color: AppColors.bgSubtle,
+          borderRadius: AppRadius.borderRadiusMd,
+          border: Border.all(color: AppColors.borderDefault),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.1),
+                borderRadius: AppRadius.borderRadiusSm,
+              ),
+              child: Icon(icon, size: 20, color: iconColor),
             ),
-            child: Icon(icon, size: 20, color: iconColor),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  fileName,
-                  style: AppTypography.bodySmall.copyWith(
-                    fontWeight: AppTypography.fontWeightMedium,
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    fileName,
+                    style: AppTypography.bodySmall.copyWith(
+                      fontWeight: AppTypography.fontWeightMedium,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  isImage ? 'Image' : (isPdf ? 'PDF Document' : 'Document'),
-                  style: AppTypography.caption.copyWith(
-                    color: AppColors.textMuted,
+                  Text(
+                    isImage ? 'Image' : (isPdf ? 'PDF Document' : 'Document'),
+                    style: AppTypography.caption.copyWith(
+                      color: AppColors.textMuted,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          Icon(
-            CupertinoIcons.eye,
-            size: 20,
-            color: AppColors.textSecondary,
-          ),
-        ],
+            Icon(
+              CupertinoIcons.chevron_right,
+              size: 16,
+              color: AppColors.textMuted,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -667,6 +914,28 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
     }
     if (submitterName.isEmpty) {
       submitterName = 'Unknown';
+    }
+
+    // Get approver name and decision info
+    String approverDisplayName = task.approverName ?? 'Pending Approval';
+    String decisionText = '';
+    Color decisionColor = AppColors.warning;
+
+    if (task.isApproved) {
+      decisionText = 'Approved';
+      decisionColor = AppColors.success;
+    } else if (task.isRejected) {
+      decisionText = 'Rejected';
+      decisionColor = AppColors.danger;
+    } else if (task.isReturned) {
+      decisionText = 'Returned';
+      decisionColor = AppColors.statusReturned;
+    }
+
+    // Format decision date if available
+    String decisionDateText = '';
+    if (task.decidedAt != null) {
+      decisionDateText = ' on ${DateFormat('dd MMM yyyy, HH:mm').format(task.decidedAt!)}';
     }
 
     return Container(
@@ -752,10 +1021,20 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.1),
+                  color: decisionColor.withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.hourglass_empty, size: 16, color: AppColors.warning),
+                child: Icon(
+                  task.isApproved
+                      ? Icons.check_circle
+                      : task.isRejected
+                          ? Icons.close
+                          : task.isReturned
+                              ? Icons.undo
+                              : Icons.hourglass_empty,
+                  size: 16,
+                  color: decisionColor,
+                ),
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
@@ -763,17 +1042,20 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Pending your approval',
+                      task.isPending
+                          ? 'Pending approval by $approverDisplayName'
+                          : '$decisionText by $approverDisplayName$decisionDateText',
                       style: AppTypography.bodyMedium.copyWith(
                         fontWeight: AppTypography.fontWeightMedium,
                       ),
                     ),
-                    Text(
-                      'Current step',
-                      style: AppTypography.caption.copyWith(
-                        color: AppColors.textSecondary,
+                    if (task.comment != null && task.comment!.isNotEmpty)
+                      Text(
+                        task.comment!,
+                        style: AppTypography.caption.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -781,6 +1063,63 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildReceiptPreviewStrip(List<ReceiptDTO> receipts) {
+    if (receipts.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Receipts',
+              style: AppTypography.bodySmall.copyWith(
+                fontWeight: AppTypography.fontWeightSemibold,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.success.withOpacity(0.1),
+                borderRadius: AppRadius.borderRadiusFull,
+              ),
+              child: Text(
+                '${receipts.length}',
+                style: AppTypography.caption.copyWith(
+                  color: AppColors.success,
+                  fontWeight: AppTypography.fontWeightMedium,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: receipts.map((receipt) {
+              return _ReceiptThumbnailWidget(
+                receipt: receipt,
+                onTap: () {
+                  final id = receipt.id;
+                  if (id != null && id.isNotEmpty) {
+                    Provider.of<AppProvider>(context, listen: false)
+                        .navigateToWithParams('receiptViewer', {'receiptId': id});
+                  }
+                },
+              );
+            }).toList(),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        const Divider(height: 1),
+        const SizedBox(height: AppSpacing.md),
+      ],
     );
   }
 
