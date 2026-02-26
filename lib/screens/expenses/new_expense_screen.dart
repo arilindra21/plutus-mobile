@@ -73,6 +73,12 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     final params = appProvider.screenParams;
     _isFromScan = params?['fromScan'] == true;
 
+    // Auto-fill form from OCR result (reference data must be loaded first
+    // so vendor matching has the full vendors list available)
+    if (_isFromScan && apiProvider.hasOCRResult) {
+      _applyOCRAutoFill(apiProvider);
+    }
+
     _isInitialized = true;
   }
 

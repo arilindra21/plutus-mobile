@@ -420,11 +420,26 @@ class ReceiptDTO {
       createdAt: DateTime.tryParse(data['createdAt'] ?? '') ?? DateTime.now(),
       ocrStatus: data['ocrStatus'],
       ocrStatusName: data['ocrStatusName'],
-      ocrData: data['ocrData'] as Map<String, dynamic>?,
+      // OCR response returns fields flat at the root level (not nested under ocrData).
+      // Build the map from flat keys when the nested key is absent.
+      ocrData: data['ocrData'] as Map<String, dynamic>? ?? _extractFlatOcrFields(data),
       ocrProcessedAt: data['ocrProcessedAt'] != null
           ? DateTime.tryParse(data['ocrProcessedAt'])
           : null,
     );
+  }
+
+  static Map<String, dynamic>? _extractFlatOcrFields(Map<String, dynamic> data) {
+    const ocrKeys = [
+      'merchantName', 'merchantAddress', 'transactionDate',
+      'totalAmount', 'currency', 'subtotal', 'taxAmount',
+      'discountAmount', 'paymentMethod', 'lineItems', 'rawText',
+    ];
+    final map = <String, dynamic>{};
+    for (final key in ocrKeys) {
+      if (data[key] != null) map[key] = data[key];
+    }
+    return map.isEmpty ? null : map;
   }
 
   // Helper getters for OCR status
