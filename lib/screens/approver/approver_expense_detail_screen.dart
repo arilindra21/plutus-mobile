@@ -33,15 +33,17 @@ class _ApproverExpenseDetailScreenState extends State<ApproverExpenseDetailScree
 
     if (task == null || task.expenseId.isEmpty) return;
 
-    // Step 1: Look up the expense from the pre-loaded expense list
-    // (loaded in review screen initState via fetchExpenses).
-    // This gives us vendor, dept, cost center, expenseType — all inaccessible
-    // via GET /api/v1/expenses/{id} (403 for manager role).
+    // Step 1: Look up the expense from the pre-loaded expense list.
+    // This gives us vendor, dept, cost center, expenseType (not available via
+    // GET /api/v1/expenses/{id} for manager role — would return 403).
+    // Fall back to the embedded task.expense snapshot if the list is empty
+    // (e.g. when navigating from History which only called fetchApprovalInbox).
     final expenseFromList = apiProvider.expenses
         .where((e) => e.id == task.expenseId)
         .firstOrNull;
-    if (expenseFromList != null) {
-      apiProvider.setSelectedExpense(expenseFromList);
+    final expenseSource = expenseFromList ?? task.expense;
+    if (expenseSource != null) {
+      apiProvider.setSelectedExpense(expenseSource);
     }
 
     // Step 2: Fetch approval task detail for authorization/stage/policy info

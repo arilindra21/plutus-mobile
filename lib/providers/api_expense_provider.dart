@@ -1351,6 +1351,9 @@ class ApiExpenseProvider extends ChangeNotifier {
   void setSelectedApprovalTask(ApprovalTaskDTO? task) {
     _selectedApprovalTask = task;
     _approvalReceipts = [];
+    // Clear stale selectedExpense so the detail screen doesn't show cached data
+    // from a previous navigation. The detail screen will re-populate it.
+    _selectedExpense = task?.expense;
     notifyListeners();
   }
 
