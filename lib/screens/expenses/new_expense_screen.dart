@@ -132,24 +132,51 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
   }
 
   /// Build metadata map to be stored on the expense.
-  /// Always includes receipt source info. If OCR ran, includes the full
-  /// extracted data (merchant, amount, date, line items, etc.).
+  /// Supports both multi-scan (receipts array) and legacy single-receipt flows.
   Map<String, dynamic>? _buildExpenseMetadata(ApiExpenseProvider apiProvider) {
-    final hasPendingReceipt = apiProvider.pendingReceiptBytes != null;
+    final scanItems = apiProvider.scanItems;
+    final hasPending = apiProvider.pendingReceiptBytes != null;
     final hasOCR = apiProvider.hasOCRResult;
 
-    if (!hasPendingReceipt && !hasOCR) return null;
+    if (scanItems.isEmpty && !hasPending && !hasOCR) return null;
 
     final meta = <String, dynamic>{};
+    meta['receiptSource'] = _isFromScan ? 'camera_scan' : 'manual_attach';
 
-    if (hasPendingReceipt) {
-      meta['receiptSource'] = _isFromScan ? 'camera_scan' : 'manual_attach';
-    }
+    if (scanItems.isNotEmpty) {
+      // Multi-scan: include array of all receipts with their OCR results
+      meta['receipts'] = scanItems.asMap().entries.map((e) {
+        final i = e.key;
+        final item = e.value;
+        final ocrData = item.ocrResult?.ocrData ?? <String, dynamic>{};
+        return <String, dynamic>{
+          'index': i,
+          'fileName': item.fileName,
+          'ocrStatus': item.ocrState.name,
+          if (item.receiptId != null) 'receiptId': item.receiptId,
+          if (ocrData['merchantName'] != null) 'merchantName': ocrData['merchantName'],
+          if (ocrData['totalAmount'] != null) 'totalAmount': ocrData['totalAmount'],
+          if (ocrData['transactionDate'] != null) 'transactionDate': ocrData['transactionDate'],
+          if (ocrData['currency'] != null) 'currency': ocrData['currency'],
+          if (ocrData['taxAmount'] != null) 'taxAmount': ocrData['taxAmount'],
+          if (ocrData['lineItems'] != null) 'lineItems': ocrData['lineItems'],
+        };
+      }).toList();
 
-    if (hasOCR) {
-      final ocrData = apiProvider.ocrResult?.ocrData ?? {};
+      // Primary OCR: first successful item
+      ScannedReceiptItem? primaryItem;
+      try {
+        primaryItem = scanItems.firstWhere(
+          (item) => item.ocrState == OCRItemState.completed && item.ocrResult != null,
+        );
+      } catch (_) {}
+      if (primaryItem?.ocrResult?.ocrData != null) {
+        meta['primaryOcr'] = primaryItem!.ocrResult!.ocrData;
+      }
+    } else if (hasOCR) {
+      // Legacy single-item flow (from camera_screen.dart scan)
+      final ocrData = apiProvider.ocrResult?.ocrData ?? <String, dynamic>{};
       final receiptId = apiProvider.ocrResult?.id;
-
       meta['ocr'] = {
         'status': 'completed',
         if (receiptId != null) 'receiptId': receiptId,
@@ -211,16 +238,18 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     super.dispose();
   }
 
-  /// Build receipt preview section with OCR status
+  /// Build receipt preview section with OCR status (supports multi-scan)
   Widget _buildReceiptPreviewSection() {
     return Consumer<ApiExpenseProvider>(
       builder: (context, apiProvider, _) {
-        final hasReceipt = apiProvider.pendingReceiptBytes != null;
+        final hasScan = apiProvider.hasScanItems;
+        final hasLegacy = apiProvider.pendingReceiptBytes != null;
         final ocrState = apiProvider.ocrState;
         final hasOCRResult = apiProvider.hasOCRResult;
+        final items = apiProvider.scanItems;
 
-        // Don't show if no receipt and not from scan
-        if (!hasReceipt && !_isFromScan) {
+        // Don't show if nothing to display
+        if (!hasScan && !hasLegacy && !_isFromScan) {
           return const SizedBox.shrink();
         }
 
@@ -255,79 +284,60 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'Receipt',
+                    items.length > 1 ? 'Receipts (${items.length})' : 'Receipt',
                     style: AppTypography.bodyMedium.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   const Spacer(),
-                  // Status badge
                   _buildOCRStatusBadge(ocrState),
                 ],
               ),
               const SizedBox(height: 12),
 
-              // Content row: Image + Status/Results
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Image thumbnail
-                  if (hasReceipt)
-                    GestureDetector(
-                      onTap: () => _showReceiptFullscreen(apiProvider.pendingReceiptBytes!),
-                      child: Container(
-                        width: 80,
-                        height: 100,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: AppColors.border),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(7),
-                          child: Image.memory(
-                            apiProvider.pendingReceiptBytes!,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                    ),
-                  const SizedBox(width: 12),
-
-                  // OCR Status/Results
-                  Expanded(
-                    child: _buildOCRStatusContent(apiProvider, ocrState, hasOCRResult),
+              // Content: multi-thumbnail strip or single thumbnail + OCR result
+              if (items.length > 1)
+                SizedBox(
+                  height: 110,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (_, i) => _buildScanItemThumbnail(items[i]),
                   ),
-                ],
-              ),
+                )
+              else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Single thumbnail
+                    if (items.isNotEmpty || hasLegacy)
+                      _buildSingleThumbnail(
+                        items.isNotEmpty ? items.first.bytes : apiProvider.pendingReceiptBytes!,
+                      ),
+                    const SizedBox(width: 12),
+                    // OCR status content
+                    Expanded(
+                      child: _buildOCRStatusContent(apiProvider, ocrState, hasOCRResult),
+                    ),
+                  ],
+                ),
 
-              // Actions row
-              if (hasReceipt && ocrState != OCRProcessingState.creatingDraft &&
+              // Actions row (shown when not actively processing)
+              if (!apiProvider.isScanProcessing &&
+                  ocrState != OCRProcessingState.creatingDraft &&
                   ocrState != OCRProcessingState.uploading &&
                   ocrState != OCRProcessingState.processingOCR)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: Row(
                     children: [
-                      // Replace button
+                      // Remove All button
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _replaceReceipt,
-                          icon: const Icon(CupertinoIcons.refresh, size: 16),
-                          label: const Text('Replace'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.textSecondary,
-                            side: const BorderSide(color: AppColors.border),
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      // Remove button
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _removeReceipt,
+                          onPressed: _removeAllReceipts,
                           icon: const Icon(CupertinoIcons.trash, size: 16),
-                          label: const Text('Remove'),
+                          label: const Text('Remove All'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.statusRejected,
                             side: BorderSide(color: AppColors.statusRejected.withOpacity(0.5)),
@@ -335,8 +345,22 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                           ),
                         ),
                       ),
-                      // Retry button (only on failure)
-                      if (ocrState == OCRProcessingState.failed) ...[
+                      const SizedBox(width: 8),
+                      // Add More button
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _showScanSourceSheet(apiProvider),
+                          icon: const Icon(CupertinoIcons.add, size: 16),
+                          label: const Text('Add More'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: const BorderSide(color: AppColors.primary),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                          ),
+                        ),
+                      ),
+                      // Retry button (single-file OCR failure)
+                      if (ocrState == OCRProcessingState.failed && items.isEmpty) ...[
                         const SizedBox(width: 8),
                         Expanded(
                           child: ElevatedButton.icon(
@@ -358,6 +382,106 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// Thumbnail for a single scan item with per-item OCR status badge
+  Widget _buildScanItemThumbnail(ScannedReceiptItem item) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
+          onTap: () => _showReceiptFullscreen(item.bytes),
+          child: Container(
+            width: 72,
+            height: 100,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _getItemBorderColor(item.ocrState)),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(7),
+              child: Image.memory(item.bytes, fit: BoxFit.cover),
+            ),
+          ),
+        ),
+        // Status badge overlay at bottom
+        Positioned(
+          bottom: 4,
+          left: 0,
+          right: 0,
+          child: Center(child: _buildOCRItemBadge(item.ocrState)),
+        ),
+      ],
+    );
+  }
+
+  Color _getItemBorderColor(OCRItemState state) {
+    switch (state) {
+      case OCRItemState.completed:
+        return AppColors.statusApproved;
+      case OCRItemState.failed:
+        return AppColors.statusRejected;
+      case OCRItemState.uploading:
+      case OCRItemState.processingOCR:
+        return AppColors.primary;
+      default:
+        return AppColors.border;
+    }
+  }
+
+  Widget _buildOCRItemBadge(OCRItemState state) {
+    Color bgColor;
+    Widget child;
+
+    switch (state) {
+      case OCRItemState.uploading:
+      case OCRItemState.processingOCR:
+        bgColor = AppColors.primary;
+        child = const SizedBox(
+          width: 10,
+          height: 10,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+        );
+        break;
+      case OCRItemState.completed:
+        bgColor = AppColors.statusApproved;
+        child = const Icon(CupertinoIcons.checkmark, size: 10, color: Colors.white);
+        break;
+      case OCRItemState.failed:
+        bgColor = AppColors.statusRejected;
+        child = const Icon(CupertinoIcons.xmark, size: 10, color: Colors.white);
+        break;
+      default:
+        bgColor = AppColors.textMuted;
+        child = const Icon(CupertinoIcons.clock, size: 10, color: Colors.white);
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: bgColor,
+        shape: BoxShape.circle,
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildSingleThumbnail(Uint8List bytes) {
+    return GestureDetector(
+      onTap: () => _showReceiptFullscreen(bytes),
+      child: Container(
+        width: 80,
+        height: 100,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(7),
+          child: Image.memory(bytes, fit: BoxFit.cover),
+        ),
+      ),
     );
   }
 
@@ -678,15 +802,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     );
   }
 
-  void _replaceReceipt() {
-    final apiProvider = context.read<ApiExpenseProvider>();
-    apiProvider.clearOCRState();
-
-    // Navigate to camera screen
-    context.read<AppProvider>().navigateToWithParams('camera', {'mode': 'scan'});
-  }
-
-  void _removeReceipt() {
+  void _removeAllReceipts() {
     final apiProvider = context.read<ApiExpenseProvider>();
 
     // Delete temp draft expense if created
@@ -694,7 +810,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       apiProvider.deleteExpense(apiProvider.tempDraftExpenseId!);
     }
 
-    apiProvider.clearOCRState();
+    apiProvider.clearOCRState(); // also clears _scanItems
     setState(() {
       _isFromScan = false;
       _ocrAutoFillApplied = false;
@@ -2175,25 +2291,11 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
               const SizedBox(height: 8),
             ],
 
-            // Add attachment buttons
-            Row(
-              children: [
-                Expanded(
-                  child: _buildAttachButton(
-                    icon: CupertinoIcons.camera_fill,
-                    label: 'Camera',
-                    onTap: () => _pickImage(ImageSource.camera, apiProvider),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildAttachButton(
-                    icon: CupertinoIcons.photo_fill,
-                    label: 'Gallery',
-                    onTap: () => _pickImage(ImageSource.gallery, apiProvider),
-                  ),
-                ),
-              ],
+            // Single Scan Receipt button
+            _buildAttachButton(
+              icon: CupertinoIcons.viewfinder,
+              label: 'Scan Receipt',
+              onTap: () => _showScanSourceSheet(apiProvider),
             ),
           ],
         );
@@ -2234,43 +2336,102 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
     );
   }
 
-  Future<void> _pickImage(ImageSource source, ApiExpenseProvider apiProvider) async {
+  /// Show bottom sheet to choose receipt source (camera or gallery)
+  void _showScanSourceSheet(ApiExpenseProvider apiProvider) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Add Receipt',
+              style: AppTypography.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: Icon(CupertinoIcons.camera_fill, color: AppColors.primary),
+              title: const Text('Take Photo'),
+              subtitle: const Text('Capture receipt with camera'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickSingleCamera(apiProvider);
+              },
+            ),
+            ListTile(
+              leading: Icon(CupertinoIcons.photo, color: AppColors.primary),
+              title: const Text('Choose from Gallery'),
+              subtitle: const Text('Select one or multiple receipts'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickMultiGallery(apiProvider);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickSingleCamera(ApiExpenseProvider apiProvider) async {
     try {
-      final XFile? pickedFile = await _imagePicker.pickImage(
-        source: source,
+      final XFile? file = await _imagePicker.pickImage(
+        source: ImageSource.camera,
         maxWidth: 1920,
         maxHeight: 1920,
         imageQuality: 85,
       );
-
-      if (pickedFile == null) return;
-
-      // Store image + read bytes for preview (shows the OCR banner immediately)
-      await apiProvider.setPendingReceiptImage(pickedFile);
-
-      // Reset auto-fill guard so this receipt can fill the form
-      setState(() => _ocrAutoFillApplied = false);
-
-      // Create temp draft → upload receipt → OCR
-      // categoryId: use whatever is already selected, else the first available
-      final authProvider = context.read<AuthProvider>();
-      final categoryId = _selectedCategoryId ?? apiProvider.categories.firstOrNull?.id ?? '';
-      await apiProvider.processReceiptWithOCR(
-        categoryId: categoryId,
-        departmentId: _selectedDepartmentId ?? authProvider.user?.departmentId,
-      );
-
-      // Auto-fill form from OCR result
-      if (mounted && apiProvider.hasOCRResult) {
-        _applyOCRAutoFill(apiProvider);
-      }
+      if (file == null) return;
+      await _runScanItems([file], apiProvider);
     } catch (e) {
       if (mounted) {
-        context.read<AppProvider>().showNotification(
-          'Failed to process receipt: $e',
-          type: 'error',
-        );
+        context.read<AppProvider>().showNotification('Failed to capture photo: $e', type: 'error');
       }
+    }
+  }
+
+  Future<void> _pickMultiGallery(ApiExpenseProvider apiProvider) async {
+    try {
+      final List<XFile> files = await _imagePicker.pickMultiImage(
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 85,
+      );
+      if (files.isEmpty) return;
+      await _runScanItems(files, apiProvider);
+    } catch (e) {
+      if (mounted) {
+        context.read<AppProvider>().showNotification('Failed to pick images: $e', type: 'error');
+      }
+    }
+  }
+
+  Future<void> _runScanItems(List<XFile> files, ApiExpenseProvider apiProvider) async {
+    setState(() => _ocrAutoFillApplied = false);
+    final authProvider = context.read<AuthProvider>();
+    final categoryId = _selectedCategoryId ?? apiProvider.categories.firstOrNull?.id ?? '';
+    await apiProvider.processScanItems(
+      files: files,
+      categoryId: categoryId,
+      departmentId: _selectedDepartmentId ?? authProvider.user?.departmentId,
+    );
+    if (mounted && apiProvider.hasOCRResult) {
+      _applyOCRAutoFill(apiProvider);
     }
   }
 
@@ -2484,10 +2645,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         );
       }
     } else {
-      // pendingReceiptBytes is set by both: (1) scan flow from camera and
-      // (2) in-form attach flow (new: _pickImage now uses setPendingReceiptImage)
-      final hasPendingReceipt = apiProvider.pendingReceiptBytes != null;
-
       // Build metadata: receipt source info + full OCR data if available
       final metadata = _buildExpenseMetadata(apiProvider);
 
@@ -2508,12 +2665,24 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       );
 
       if (result != null) {
-        // Upload the receipt bytes to the real expense.
-        // This handles both: (1) scan flow (from camera) and
-        // (2) in-form attach flow where OCR already ran on a temp draft.
-        // The bytes are re-uploaded here so the receipt is linked to the
-        // real expense. The temp draft (if any) is deleted afterwards.
-        if (hasPendingReceipt) {
+        // Upload receipts to the real expense.
+        // Multi-scan: upload all scan items (they have pre-read bytes).
+        // Legacy single: upload pendingReceiptBytes (from camera_screen flow).
+        // The temp draft (if any) is deleted after upload.
+        final scanItems = apiProvider.scanItems;
+        if (scanItems.isNotEmpty) {
+          print('DEBUG: Uploading ${scanItems.length} scanned receipts...');
+          for (final item in scanItems) {
+            final uploadResult = await apiProvider.uploadReceipt(
+              expenseId: result.id,
+              file: item.bytes,
+              fileName: item.fileName,
+            );
+            if (uploadResult == null) {
+              print('ERROR: Failed to upload scan item: ${item.fileName}');
+            }
+          }
+        } else if (apiProvider.pendingReceiptBytes != null) {
           final receiptBytes = apiProvider.pendingReceiptBytes!;
           final uploadResult = await apiProvider.uploadReceipt(
             expenseId: result.id,

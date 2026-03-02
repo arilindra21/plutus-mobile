@@ -14,6 +14,28 @@ enum OCRProcessingState {
   failed,
 }
 
+/// Per-item OCR state for multi-scan sessions
+enum OCRItemState { pending, uploading, processingOCR, completed, failed }
+
+/// State for a single scanned receipt in a multi-scan session
+class ScannedReceiptItem {
+  final Uint8List bytes;
+  final String fileName;
+  OCRItemState ocrState;
+  ReceiptDTO? ocrResult;
+  String? ocrError;
+  String? receiptId; // Set after upload to temp draft
+
+  ScannedReceiptItem({
+    required this.bytes,
+    required this.fileName,
+    this.ocrState = OCRItemState.pending,
+    this.ocrResult,
+    this.ocrError,
+    this.receiptId,
+  });
+}
+
 /// API-backed Expense Provider - uses real backend API
 class ApiExpenseProvider extends ChangeNotifier {
   final ExpenseService _expenseService = ExpenseService();
@@ -74,6 +96,9 @@ class ApiExpenseProvider extends ChangeNotifier {
   String? _tempDraftExpenseId; // Draft expense created for OCR
   String? _ocrError; // Error message if OCR fails
 
+  // Multi-scan session state
+  List<ScannedReceiptItem> _scanItems = [];
+
   // Filter state
   ExpenseListParams _currentFilters = ExpenseListParams();
   ApprovalInboxParams _approvalFilters = ApprovalInboxParams();
@@ -126,6 +151,14 @@ class ApiExpenseProvider extends ChangeNotifier {
                                _ocrState != OCRProcessingState.completed &&
                                _ocrState != OCRProcessingState.failed;
   bool get hasOCRResult => _ocrResult != null && _ocrResult!.ocrData != null;
+
+  // Multi-scan getters
+  List<ScannedReceiptItem> get scanItems => List.unmodifiable(_scanItems);
+  bool get hasScanItems => _scanItems.isNotEmpty;
+  int get scanItemCount => _scanItems.length;
+  bool get isScanProcessing => _scanItems.any((item) =>
+      item.ocrState == OCRItemState.uploading ||
+      item.ocrState == OCRItemState.processingOCR);
 
   int get activeCardIndex => _activeCardIndex;
   String get instrumentFilter => _instrumentFilter;
@@ -1455,7 +1488,7 @@ class ApiExpenseProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Clear all OCR state
+  /// Clear all OCR state (including multi-scan items)
   void clearOCRState() {
     _ocrState = OCRProcessingState.idle;
     _pendingReceiptImage = null;
@@ -1463,6 +1496,7 @@ class ApiExpenseProvider extends ChangeNotifier {
     _ocrResult = null;
     _tempDraftExpenseId = null;
     _ocrError = null;
+    _scanItems = [];
     notifyListeners();
   }
 
@@ -1599,6 +1633,95 @@ class ApiExpenseProvider extends ChangeNotifier {
       categoryId: categoryId,
       departmentId: departmentId,
     );
+  }
+
+  /// Multi-file scan: create ONE shared draft, upload+OCR each file sequentially.
+  /// Sets _ocrResult and _pendingReceiptBytes to first successful result for backward compat.
+  Future<void> processScanItems({
+    required List<dynamic> files, // List of XFile
+    required String categoryId,
+    String? departmentId,
+  }) async {
+    if (files.isEmpty) return;
+
+    // Initialize scan items: read bytes from each XFile
+    _scanItems = [];
+    for (final file in files) {
+      final bytes = await file.readAsBytes() as Uint8List;
+      final name = file.name as String;
+      _scanItems.add(ScannedReceiptItem(bytes: bytes, fileName: name));
+    }
+
+    // Backward compat: set first item bytes for preview
+    _pendingReceiptBytes = _scanItems.first.bytes;
+    _ocrState = OCRProcessingState.creatingDraft;
+    _ocrError = null;
+    _ocrResult = null;
+    notifyListeners();
+
+    try {
+      // Step 1: Create ONE shared draft expense
+      final draftExpense = await createExpense(
+        amount: 0,
+        categoryId: categoryId,
+        expenseDate: DateTime.now(),
+        description: 'Receipt scan - pending OCR',
+        expenseType: 'reimbursement',
+        departmentId: departmentId,
+        submitForApproval: false,
+      );
+      if (draftExpense == null) throw Exception(_error ?? 'Failed to create draft expense');
+      _tempDraftExpenseId = draftExpense.id;
+
+      // Step 2: Upload + OCR each item sequentially
+      ReceiptDTO? firstSuccess;
+      for (int i = 0; i < _scanItems.length; i++) {
+        final item = _scanItems[i];
+        item.ocrState = OCRItemState.uploading;
+        notifyListeners();
+
+        final uploadResult = await uploadReceipt(
+          expenseId: draftExpense.id,
+          file: item.bytes,
+          fileName: item.fileName,
+        );
+        if (uploadResult == null) {
+          item.ocrState = OCRItemState.failed;
+          item.ocrError = _error ?? 'Upload failed';
+          notifyListeners();
+          continue;
+        }
+        item.receiptId = uploadResult.id;
+        item.ocrState = OCRItemState.processingOCR;
+        notifyListeners();
+
+        final ocrResult = await processReceiptOCR(uploadResult.id);
+        if (ocrResult != null && ocrResult.ocrData != null) {
+          item.ocrState = OCRItemState.completed;
+          item.ocrResult = ocrResult;
+          firstSuccess ??= ocrResult;
+        } else {
+          item.ocrState = OCRItemState.failed;
+          item.ocrError = 'OCR extraction failed';
+        }
+        notifyListeners();
+      }
+
+      // Step 3: Set global state from first success (backward compat for auto-fill)
+      if (firstSuccess != null) {
+        _ocrResult = firstSuccess;
+        _ocrState = OCRProcessingState.completed;
+      } else {
+        _ocrState = OCRProcessingState.failed;
+        _ocrError = 'OCR failed for all receipts';
+      }
+      notifyListeners();
+    } catch (e) {
+      print('ERROR processScanItems: $e');
+      _ocrState = OCRProcessingState.failed;
+      _ocrError = e.toString();
+      notifyListeners();
+    }
   }
 
   /// Get OCR data field with null safety
