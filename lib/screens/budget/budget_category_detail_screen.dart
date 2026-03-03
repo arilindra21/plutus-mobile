@@ -20,6 +20,8 @@ class BudgetCategoryDetailScreen extends StatefulWidget {
 class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen> {
   bool _isInitialized = false;
   bool _isNavigating = false;
+  List<ExpenseDTO> _budgetExpenses = [];
+  bool _isLoadingExpenses = false;
 
   @override
   void initState() {
@@ -35,16 +37,47 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
     final apiProvider = context.read<ApiExpenseProvider>();
     final selectedBudgetId = apiProvider.selectedBudgetCategory;
 
-    // Fetch expenses and budget analytics
-    final futures = <Future>[];
-    if (apiProvider.expenses.isEmpty) {
-      futures.add(apiProvider.fetchExpenses());
-    }
     if (selectedBudgetId != null && selectedBudgetId.isNotEmpty) {
-      futures.add(apiProvider.fetchBudgetAnalytics(selectedBudgetId));
+      await apiProvider.fetchBudgetAnalytics(selectedBudgetId);
     }
-    await Future.wait(futures);
+
+    // After analytics (history) loaded, fetch each expense by sourceId
+    await _fetchExpensesFromHistory(apiProvider);
     _isInitialized = true;
+  }
+
+  /// Fetch each expense by sourceId from budget history transactions.
+  /// This is necessary because the expense list may not include expenses
+  /// from other users (e.g., subordinates in a manager's budget view).
+  Future<void> _fetchExpensesFromHistory(ApiExpenseProvider apiProvider) async {
+    final history = apiProvider.selectedBudgetHistory;
+    if (history == null) return;
+
+    final expenseIds = history.transactions
+        .where((tx) => tx.sourceType == 'expense' && tx.sourceId.isNotEmpty)
+        .map((tx) => tx.sourceId)
+        .toSet()
+        .toList();
+
+    if (expenseIds.isEmpty) return;
+
+    setState(() => _isLoadingExpenses = true);
+
+    final fetched = <ExpenseDTO>[];
+    for (final id in expenseIds) {
+      final expense = await apiProvider.getExpense(id);
+      if (expense != null) fetched.add(expense);
+    }
+
+    // Sort newest first
+    fetched.sort((a, b) => b.expenseDate.compareTo(a.expenseDate));
+
+    if (mounted) {
+      setState(() {
+        _budgetExpenses = fetched;
+        _isLoadingExpenses = false;
+      });
+    }
   }
 
   /// Navigate to expense detail from a budget history item.
@@ -138,31 +171,15 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
     final trend = apiProvider.selectedBudgetTrend;
     final history = apiProvider.selectedBudgetHistory;
 
-    // Get expense IDs from budget history transactions (the reliable source)
-    // Budget history contains transactions with sourceType='expense' and sourceId=expenseId
-    final Set<String> budgetExpenseIds = {};
-    if (history != null) {
-      for (final tx in history.transactions) {
-        if (tx.sourceType == 'expense' && tx.sourceId.isNotEmpty) {
-          budgetExpenseIds.add(tx.sourceId);
-        }
-      }
-    }
-
-    // Filter expenses to only show those that belong to this budget
-    final budgetExpenses = apiProvider.expenses.where((expense) {
-      return budgetExpenseIds.contains(expense.id);
-    }).toList();
-
-    // Sort expenses by date (newest first)
-    budgetExpenses.sort((a, b) => b.expenseDate.compareTo(a.expenseDate));
+    // Use expenses fetched directly by sourceId from history
+    final budgetExpenses = _budgetExpenses;
 
     return RefreshIndicator(
       onRefresh: () async {
-        await apiProvider.fetchExpenses();
         if (budget.id.isNotEmpty) {
           await apiProvider.fetchBudgetAnalytics(budget.id);
         }
+        await _fetchExpensesFromHistory(apiProvider);
       },
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -267,10 +284,15 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
                     ],
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  if (budgetExpenses.isEmpty)
+                  if (_isLoadingExpenses)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+                      child: Center(child: CupertinoActivityIndicator(radius: 14)),
+                    )
+                  else if (budgetExpenses.isEmpty)
                     _buildEmptyState()
                   else
-                    ...budgetExpenses.take(10).map((expense) => _ApiExpenseItem(
+                    ...budgetExpenses.map((expense) => _ApiExpenseItem(
                           expense: expense,
                           onTap: () {
                             apiProvider.setSelectedExpense(expense);
