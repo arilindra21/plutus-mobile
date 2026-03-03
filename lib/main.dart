@@ -279,27 +279,35 @@ class _AppRouterState extends State<AppRouter> {
           );
         }
 
-        return Stack(
-          children: [
-            // Main screen content
-            _buildScreen(appProvider.currentScreen),
+        return PopScope(
+          canPop: appProvider.navigationStack.length <= 1,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop && appProvider.navigationStack.length > 1) {
+              appProvider.goBack();
+            }
+          },
+          child: Stack(
+            children: [
+              // Main screen content
+              _buildScreen(appProvider.currentScreen),
 
-            // Side menu overlay
-            if (appProvider.sideMenuOpen)
-              GestureDetector(
-                onTap: () => appProvider.toggleSideMenu(),
-                child: Container(
-                  color: Colors.black54,
+              // Side menu overlay
+              if (appProvider.sideMenuOpen)
+                GestureDetector(
+                  onTap: () => appProvider.toggleSideMenu(),
+                  child: Container(
+                    color: Colors.black54,
+                  ),
                 ),
-              ),
 
-            // Side menu
-            const SideMenu(),
+              // Side menu
+              const SideMenu(),
 
-            // Notification toast
-            if (appProvider.notification != null)
-              _buildNotificationToast(context, appProvider),
-          ],
+              // Notification toast
+              if (appProvider.notification != null)
+                _buildNotificationToast(context, appProvider),
+            ],
+          ),
         );
       },
     );

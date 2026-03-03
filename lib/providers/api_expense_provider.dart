@@ -580,7 +580,61 @@ class ApiExpenseProvider extends ChangeNotifier {
 
     _isSubmitting = false;
     if (result.isSuccess) {
-      // Refresh expense to get updated receipts list
+      // Optimistic update: immediately add receipt to UI so flag disappears right away
+      if (_selectedExpense != null && _selectedExpense!.id == expenseId && result.data != null) {
+        final currentReceipts = List<ReceiptDTO>.from(_selectedExpense!.receipts ?? []);
+        currentReceipts.add(result.data!);
+        _selectedExpense = ExpenseDTO(
+          id: _selectedExpense!.id,
+          organizationId: _selectedExpense!.organizationId,
+          entityId: _selectedExpense!.entityId,
+          requesterId: _selectedExpense!.requesterId,
+          requesterName: _selectedExpense!.requesterName,
+          originalAmount: _selectedExpense!.originalAmount,
+          originalCurrency: _selectedExpense!.originalCurrency,
+          baseAmount: _selectedExpense!.baseAmount,
+          baseCurrency: _selectedExpense!.baseCurrency,
+          exchangeRate: _selectedExpense!.exchangeRate,
+          categoryId: _selectedExpense!.categoryId,
+          categoryName: _selectedExpense!.categoryName,
+          categoryCode: _selectedExpense!.categoryCode,
+          categoryIcon: _selectedExpense!.categoryIcon,
+          categoryFields: _selectedExpense!.categoryFields,
+          departmentId: _selectedExpense!.departmentId,
+          departmentName: _selectedExpense!.departmentName,
+          costCenterId: _selectedExpense!.costCenterId,
+          costCenterName: _selectedExpense!.costCenterName,
+          expenseType: _selectedExpense!.expenseType,
+          expenseDate: _selectedExpense!.expenseDate,
+          status: _selectedExpense!.status,
+          statusName: _selectedExpense!.statusName,
+          statusReason: _selectedExpense!.statusReason,
+          receiptStatus: _selectedExpense!.receiptStatus,
+          receiptStatusName: _selectedExpense!.receiptStatusName,
+          receiptRequired: _selectedExpense!.receiptRequired,
+          receiptDueDate: _selectedExpense!.receiptDueDate,
+          policyStatus: _selectedExpense!.policyStatus,
+          policyStatusName: _selectedExpense!.policyStatusName,
+          policyFlags: _selectedExpense!.policyFlags,
+          workflowRunId: _selectedExpense!.workflowRunId,
+          submittedAt: _selectedExpense!.submittedAt,
+          approvedAt: _selectedExpense!.approvedAt,
+          completedAt: _selectedExpense!.completedAt,
+          requiresEmployeeRepayment: _selectedExpense!.requiresEmployeeRepayment,
+          repaymentAmount: _selectedExpense!.repaymentAmount,
+          repaymentStatus: _selectedExpense!.repaymentStatus,
+          description: _selectedExpense!.description,
+          vendorId: _selectedExpense!.vendorId,
+          vendorName: _selectedExpense!.vendorName,
+          metadata: _selectedExpense!.metadata,
+          createdAt: _selectedExpense!.createdAt,
+          updatedAt: _selectedExpense!.updatedAt,
+          createdBy: _selectedExpense!.createdBy,
+          receipts: currentReceipts,
+        );
+        notifyListeners();
+      }
+      // Then refresh from server to confirm
       await getExpense(expenseId);
       notifyListeners();
       return result.data;

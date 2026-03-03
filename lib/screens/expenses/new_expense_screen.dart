@@ -30,6 +30,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
   String? _selectedDepartmentId;
   String? _selectedCostCenterId;
   String? _selectedVendorId;
+  String? _otherVendorName; // Used when "Other" vendor is selected
   String _selectedCurrency = 'IDR';
   String _selectedExpenseType = 'reimbursement';
   bool _submitForApproval = false;
@@ -1578,7 +1579,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
               color: Colors.white,
               borderRadius: BorderRadius.circular(AppRadius.lg),
               boxShadow: AppShadows.card,
-              border: _selectedVendorId == null
+              border: (_selectedVendorId == null && _otherVendorName == null)
                   ? Border.all(color: AppColors.statusRejected.withValues(alpha: 0.5), width: 1)
                   : null,
             ),
@@ -1612,11 +1613,11 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        selectedVendor?.name ?? 'Tap to select vendor',
+                        selectedVendor?.name ?? _otherVendorName ?? 'Tap to select vendor',
                         style: TextStyle(
                           fontSize: 15,
-                          fontWeight: selectedVendor != null ? FontWeight.w600 : FontWeight.w400,
-                          color: selectedVendor != null ? AppColors.textPrimary : AppColors.textMuted,
+                          fontWeight: (selectedVendor != null || _otherVendorName != null) ? FontWeight.w600 : FontWeight.w400,
+                          color: (selectedVendor != null || _otherVendorName != null) ? AppColors.textPrimary : AppColors.textMuted,
                         ),
                       ),
                       if (selectedVendor?.externalId != null && selectedVendor!.externalId!.isNotEmpty) ...[
@@ -1648,222 +1649,333 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
   void _showVendorPicker(List<VendorDTO> vendors) {
     // Filter out blocked vendors
     final activeVendors = vendors.where((v) => !v.isBlocked).toList();
+    final searchController = TextEditingController();
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (ctx) => Container(
-        height: MediaQuery.of(context).size.height * 0.7,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          children: [
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.border,
-                borderRadius: BorderRadius.circular(2),
-              ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          final query = searchController.text.toLowerCase();
+          final filteredVendors = query.isEmpty
+              ? activeVendors
+              : activeVendors.where((v) =>
+                  v.name.toLowerCase().contains(query) ||
+                  (v.externalId?.toLowerCase().contains(query) ?? false)).toList();
+
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.8,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Select Vendor',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
+            child: Column(
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  GestureDetector(
-                    onTap: () => Navigator.pop(ctx),
-                    child: Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: AppColors.bgSubtle,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(CupertinoIcons.xmark, size: 16, color: AppColors.textMuted),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // Info banner
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: FintechColors.categoryBlueBg,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
-                child: Row(
-                  children: [
-                    Icon(
-                      CupertinoIcons.info_circle_fill,
-                      color: FintechColors.categoryBlue,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        '${activeVendors.length} vendors available',
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Select Vendor',
                         style: TextStyle(
-                          fontSize: 13,
-                          color: FintechColors.categoryBlue,
-                          fontWeight: FontWeight.w500,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                itemCount: activeVendors.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemBuilder: (context, index) {
-                  final vendor = activeVendors[index];
-                  final isSelected = vendor.id == _selectedVendorId;
-                  final isGlobal = vendor.isGlobal;
-
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() => _selectedVendorId = vendor.id);
-                      Navigator.pop(ctx);
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: isSelected ? FintechColors.primary.withValues(alpha: 0.1) : AppColors.bgSubtle,
-                        borderRadius: BorderRadius.circular(AppRadius.lg),
-                        border: isSelected ? Border.all(color: FintechColors.primary, width: 2) : null,
+                      GestureDetector(
+                        onTap: () => Navigator.pop(ctx),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: AppColors.bgSubtle,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(CupertinoIcons.xmark, size: 16, color: AppColors.textMuted),
+                        ),
                       ),
-                      child: Row(
-                        children: [
-                          // Vendor icon with global indicator
-                          Stack(
-                            children: [
-                              Container(
-                                width: 44,
-                                height: 44,
-                                decoration: BoxDecoration(
-                                  color: isGlobal ? FintechColors.categoryGreenBg : FintechColors.categoryBlueBg,
-                                  borderRadius: BorderRadius.circular(AppRadius.md),
-                                ),
-                                child: Icon(
-                                  CupertinoIcons.building_2_fill,
-                                  color: isGlobal ? FintechColors.categoryGreen : FintechColors.categoryBlue,
-                                  size: 22,
-                                ),
-                              ),
-                              if (isGlobal)
-                                Positioned(
-                                  right: -2,
-                                  bottom: -2,
-                                  child: Container(
-                                    width: 16,
-                                    height: 16,
-                                    decoration: BoxDecoration(
-                                      color: FintechColors.categoryGreen,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(color: Colors.white, width: 2),
-                                    ),
-                                    child: const Icon(
-                                      CupertinoIcons.globe,
-                                      color: Colors.white,
-                                      size: 8,
-                                    ),
+                    ],
+                  ),
+                ),
+                // Search field
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: TextField(
+                    controller: searchController,
+                    onChanged: (_) => setModalState(() {}),
+                    decoration: InputDecoration(
+                      hintText: 'Search vendor...',
+                      prefixIcon: const Icon(CupertinoIcons.search, size: 18),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        borderSide: BorderSide(color: AppColors.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        borderSide: BorderSide(color: AppColors.border),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                    itemCount: filteredVendors.length + 1, // +1 for "Other" option
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      // "Other" option at the end
+                      if (index == filteredVendors.length) {
+                        final isOtherSelected = _selectedVendorId == null && _otherVendorName != null;
+                        return GestureDetector(
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _showOtherVendorInput();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: isOtherSelected
+                                  ? FintechColors.primary.withValues(alpha: 0.1)
+                                  : AppColors.bgSubtle,
+                              borderRadius: BorderRadius.circular(AppRadius.lg),
+                              border: isOtherSelected
+                                  ? Border.all(color: FintechColors.primary, width: 2)
+                                  : Border.all(color: AppColors.border, width: 1),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.bgSubtle,
+                                    borderRadius: BorderRadius.circular(AppRadius.md),
+                                    border: Border.all(color: AppColors.border),
+                                  ),
+                                  child: Icon(
+                                    CupertinoIcons.pencil,
+                                    color: AppColors.textMuted,
+                                    size: 20,
                                   ),
                                 ),
-                            ],
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        vendor.name,
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Other',
                                         style: TextStyle(
                                           fontSize: 15,
-                                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                          fontWeight: FontWeight.w500,
                                           color: AppColors.textPrimary,
                                         ),
                                       ),
-                                    ),
-                                    if (isGlobal)
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: FintechColors.categoryGreenBg,
-                                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                                        ),
-                                        child: Text(
-                                          'Global',
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w600,
-                                            color: FintechColors.categoryGreen,
-                                          ),
+                                      Text(
+                                        isOtherSelected
+                                            ? _otherVendorName!
+                                            : 'Enter vendor name manually',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textMuted,
                                         ),
                                       ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                                if (vendor.externalId != null && vendor.externalId!.isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'ID: ${vendor.externalId}',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.textMuted,
-                                    ),
+                                if (isOtherSelected)
+                                  Icon(
+                                    CupertinoIcons.checkmark_circle_fill,
+                                    color: FintechColors.primary,
+                                    size: 22,
                                   ),
-                                ],
-                                if (vendor.normalizedName != null && vendor.normalizedName != vendor.name) ...[
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    vendor.normalizedName!,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: AppColors.textMuted,
-                                      fontStyle: FontStyle.italic,
-                                    ),
-                                  ),
-                                ],
                               ],
                             ),
                           ),
-                          if (isSelected)
-                            Icon(
-                              CupertinoIcons.checkmark_circle_fill,
-                              color: FintechColors.primary,
-                              size: 22,
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
+                        );
+                      }
+
+                      final vendor = filteredVendors[index];
+                      final isSelected = vendor.id == _selectedVendorId;
+                      final isGlobal = vendor.isGlobal;
+
+                      return GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _selectedVendorId = vendor.id;
+                            _otherVendorName = null;
+                          });
+                          Navigator.pop(ctx);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: isSelected ? FintechColors.primary.withValues(alpha: 0.1) : AppColors.bgSubtle,
+                            borderRadius: BorderRadius.circular(AppRadius.lg),
+                            border: isSelected ? Border.all(color: FintechColors.primary, width: 2) : null,
+                          ),
+                          child: Row(
+                            children: [
+                              // Vendor icon with global indicator
+                              Stack(
+                                children: [
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: isGlobal ? FintechColors.categoryGreenBg : FintechColors.categoryBlueBg,
+                                      borderRadius: BorderRadius.circular(AppRadius.md),
+                                    ),
+                                    child: Icon(
+                                      CupertinoIcons.building_2_fill,
+                                      color: isGlobal ? FintechColors.categoryGreen : FintechColors.categoryBlue,
+                                      size: 22,
+                                    ),
+                                  ),
+                                  if (isGlobal)
+                                    Positioned(
+                                      right: -2,
+                                      bottom: -2,
+                                      child: Container(
+                                        width: 16,
+                                        height: 16,
+                                        decoration: BoxDecoration(
+                                          color: FintechColors.categoryGreen,
+                                          shape: BoxShape.circle,
+                                          border: Border.all(color: Colors.white, width: 2),
+                                        ),
+                                        child: const Icon(
+                                          CupertinoIcons.globe,
+                                          color: Colors.white,
+                                          size: 8,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            vendor.name,
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                              color: AppColors.textPrimary,
+                                            ),
+                                          ),
+                                        ),
+                                        if (isGlobal)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: FintechColors.categoryGreenBg,
+                                              borderRadius: BorderRadius.circular(AppRadius.sm),
+                                            ),
+                                            child: Text(
+                                              'Global',
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w600,
+                                                color: FintechColors.categoryGreen,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    if (vendor.externalId != null && vendor.externalId!.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'ID: ${vendor.externalId}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textMuted,
+                                        ),
+                                      ),
+                                    ],
+                                    if (vendor.normalizedName != null && vendor.normalizedName != vendor.name) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        vendor.normalizedName!,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: AppColors.textMuted,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              if (isSelected)
+                                Icon(
+                                  CupertinoIcons.checkmark_circle_fill,
+                                  color: FintechColors.primary,
+                                  size: 22,
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-          ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showOtherVendorInput() {
+    final controller = TextEditingController(text: _otherVendorName ?? '');
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enter Vendor Name'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'e.g. Warung Makan Padang'),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isNotEmpty) {
+                setState(() {
+                  _selectedVendorId = null;
+                  _otherVendorName = name;
+                });
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('Confirm'),
+          ),
+        ],
       ),
     );
   }
@@ -2549,7 +2661,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
     try {
       // Validate vendor selection
-      if (_selectedVendorId == null) {
+      if (_selectedVendorId == null && (_otherVendorName == null || _otherVendorName!.trim().isEmpty)) {
         appProvider.showNotification('Please select a vendor', type: 'error');
         return;
       }
@@ -2558,9 +2670,9 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       final categoryId = _selectedCategoryId ?? apiProvider.categories.first.id;
       final description = _notesController.text.isNotEmpty ? _notesController.text : null;
 
-      // Get vendor name from selected vendor
+      // Get vendor name from selected vendor or "Other" input
       final selectedVendor = apiProvider.vendors.where((v) => v.id == _selectedVendorId).firstOrNull;
-      final merchantName = selectedVendor?.name;
+      final merchantName = selectedVendor?.name ?? _otherVendorName;
 
       ExpenseDTO? result;
 
