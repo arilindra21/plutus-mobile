@@ -63,11 +63,8 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
 
     setState(() => _isLoadingExpenses = true);
 
-    final fetched = <ExpenseDTO>[];
-    for (final id in expenseIds) {
-      final expense = await apiProvider.getExpense(id);
-      if (expense != null) fetched.add(expense);
-    }
+    // Use fetchExpensesByIds to avoid disturbing global provider state
+    final fetched = await apiProvider.fetchExpensesByIds(expenseIds);
 
     // Sort newest first
     fetched.sort((a, b) => b.expenseDate.compareTo(a.expenseDate));
@@ -92,15 +89,16 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
     setState(() => _isNavigating = true);
 
     try {
-      // Fetch expense and approval task in parallel
+      // Fetch expense and approval task in parallel without disturbing global state
       final results = await Future.wait([
-        apiProvider.getExpense(tx.sourceId),
+        apiProvider.fetchExpensesByIds([tx.sourceId]),
         apiProvider.fetchApprovalTaskForExpense(tx.sourceId),
       ]);
 
       if (!mounted) return;
 
-      final expense = results[0] as ExpenseDTO?;
+      final expenseList = results[0] as List<ExpenseDTO>;
+      final expense = expenseList.isNotEmpty ? expenseList.first : null;
       final approvalTask = results[1] as ApprovalTaskDTO?;
 
       if (expense == null) {

@@ -286,6 +286,19 @@ class ApiExpenseProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Fetch multiple expenses by their IDs without touching global state.
+  /// Used for budget detail to load related expenses from history sourceIds.
+  Future<List<ExpenseDTO>> fetchExpensesByIds(List<String> ids) async {
+    final results = <ExpenseDTO>[];
+    for (final id in ids) {
+      final result = await _expenseService.getExpense(id);
+      if (result.isSuccess && result.data != null) {
+        results.add(result.data!);
+      }
+    }
+    return results;
+  }
+
   /// Get single expense
   Future<ExpenseDTO?> getExpense(String id) async {
     _isLoading = true;
