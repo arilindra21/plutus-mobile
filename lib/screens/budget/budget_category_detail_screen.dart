@@ -6,6 +6,7 @@ import '../../providers/app_provider.dart';
 import '../../providers/api_expense_provider.dart';
 import '../../services/models/expense_dto.dart';
 import '../../services/models/budget_dto.dart';
+import '../../services/models/approval_dto.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/common/status_badge.dart';
 
