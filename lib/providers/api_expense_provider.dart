@@ -804,6 +804,18 @@ class ApiExpenseProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Fetch approval task for a specific expense (by targetId)
+  /// Used in budget history to check if a history item has a pending approval
+  Future<ApprovalTaskDTO?> fetchApprovalTaskForExpense(String expenseId) async {
+    final result = await _approvalService.getInbox(
+      ApprovalInboxParams(targetId: expenseId, pageSize: 5),
+    );
+    if (result.isSuccess && result.data!.data.isNotEmpty) {
+      return result.data!.data.first;
+    }
+    return null;
+  }
+
   /// Fetch inbox summary
   Future<void> fetchInboxSummary() async {
     final result = await _approvalService.getInboxSummary();

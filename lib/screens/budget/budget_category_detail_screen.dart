@@ -18,6 +18,7 @@ class BudgetCategoryDetailScreen extends StatefulWidget {
 
 class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen> {
   bool _isInitialized = false;
+  bool _isNavigating = false;
 
   @override
   void initState() {
@@ -43,6 +44,48 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
     }
     await Future.wait(futures);
     _isInitialized = true;
+  }
+
+  /// Navigate to expense detail from a budget history item.
+  /// Uses sourceId as the expense ID, and also checks for a pending approval
+  /// task via the approvals inbox (targetId = sourceId).
+  Future<void> _navigateToHistoryExpense(BudgetTransactionItem tx) async {
+    if (_isNavigating || tx.sourceId.isEmpty) return;
+
+    final apiProvider = context.read<ApiExpenseProvider>();
+    final appProvider = context.read<AppProvider>();
+
+    setState(() => _isNavigating = true);
+
+    try {
+      // Fetch expense and approval task in parallel
+      final results = await Future.wait([
+        apiProvider.getExpense(tx.sourceId),
+        apiProvider.fetchApprovalTaskForExpense(tx.sourceId),
+      ]);
+
+      if (!mounted) return;
+
+      final expense = results[0] as ExpenseDTO?;
+      final approvalTask = results[1] as ApprovalTaskDTO?;
+
+      if (expense == null) {
+        appProvider.showNotification('Expense not found', type: 'error');
+        return;
+      }
+
+      if (approvalTask != null) {
+        // Manager has a pending approval task → go to approver detail
+        apiProvider.setSelectedApprovalTask(approvalTask);
+        appProvider.navigateTo('approverExpenseDetail');
+      } else {
+        // No pending approval → go to regular expense detail
+        apiProvider.setSelectedExpense(expense);
+        appProvider.navigateTo('transactionDetail');
+      }
+    } finally {
+      if (mounted) setState(() => _isNavigating = false);
+    }
   }
 
   @override
@@ -193,7 +236,7 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
                 child: Column(
-                  children: history.transactions.take(5).map((tx) => _buildHistoryItem(tx)).toList(),
+                  children: history.transactions.map((tx) => _buildHistoryItem(tx)).toList(),
                 ),
               ),
               const SizedBox(height: AppSpacing.lg),
@@ -427,61 +470,79 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
       }
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: AppColors.bgDefault,
-        borderRadius: AppRadius.borderRadiusMd,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: getColor().withOpacity(0.1),
-              borderRadius: AppRadius.borderRadiusMd,
+    final isExpenseSource = transaction.sourceType == 'expense' && transaction.sourceId.isNotEmpty;
+
+    return GestureDetector(
+      onTap: isExpenseSource ? () => _navigateToHistoryExpense(transaction) : null,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+        padding: const EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          color: AppColors.bgDefault,
+          borderRadius: AppRadius.borderRadiusMd,
+          border: isExpenseSource
+              ? Border.all(color: AppColors.primary.withOpacity(0.15))
+              : null,
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: getColor().withOpacity(0.1),
+                borderRadius: AppRadius.borderRadiusMd,
+              ),
+              child: _isNavigating
+                  ? const CupertinoActivityIndicator(radius: 10)
+                  : Icon(getIcon(), color: getColor(), size: 20),
             ),
-            child: Icon(getIcon(), color: getColor(), size: 20),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    transaction.operationLabel,
+                    style: AppTypography.bodyMedium.copyWith(
+                      fontWeight: AppTypography.fontWeightMedium,
+                    ),
+                  ),
+                  Text(
+                    transaction.description ?? transaction.sourceType,
+                    style: AppTypography.caption.copyWith(
+                      color: AppColors.textMuted,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    _formatDateTime(transaction.createdAt),
+                    style: AppTypography.caption.copyWith(
+                      color: AppColors.textMuted,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Row(
               children: [
                 Text(
-                  transaction.operationLabel,
+                  '${isDebit ? '-' : '+'}${formatRupiahCompact(transaction.amount)}',
                   style: AppTypography.bodyMedium.copyWith(
-                    fontWeight: AppTypography.fontWeightMedium,
+                    color: isDebit ? AppColors.danger : AppColors.success,
+                    fontWeight: AppTypography.fontWeightSemibold,
                   ),
                 ),
-                Text(
-                  transaction.description ?? transaction.sourceType,
-                  style: AppTypography.caption.copyWith(
-                    color: AppColors.textMuted,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  _formatDateTime(transaction.createdAt),
-                  style: AppTypography.caption.copyWith(
-                    color: AppColors.textMuted,
-                    fontSize: 10,
-                  ),
-                ),
+                if (isExpenseSource) ...[
+                  const SizedBox(width: AppSpacing.xs),
+                  Icon(CupertinoIcons.chevron_right, size: 14, color: AppColors.textMuted),
+                ],
               ],
             ),
-          ),
-          Text(
-            '${isDebit ? '-' : '+'}${formatRupiahCompact(transaction.amount)}',
-            style: AppTypography.bodyMedium.copyWith(
-              color: isDebit ? AppColors.danger : AppColors.success,
-              fontWeight: AppTypography.fontWeightSemibold,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

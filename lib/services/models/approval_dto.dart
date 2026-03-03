@@ -265,6 +265,7 @@ class ApprovalInboxParams {
   final String? decision;
   final DateTime? dateFrom;
   final DateTime? dateTo;
+  final String? targetId;
 
   ApprovalInboxParams({
     this.page = 1,
@@ -275,6 +276,7 @@ class ApprovalInboxParams {
     this.decision,
     this.dateFrom,
     this.dateTo,
+    this.targetId,
   });
 
   Map<String, dynamic> toQueryParams() {
@@ -289,6 +291,7 @@ class ApprovalInboxParams {
     if (decision != null) params['decision'] = decision;
     if (dateFrom != null) params['date_from'] = dateFrom!.toIso8601String();
     if (dateTo != null) params['date_to'] = dateTo!.toIso8601String();
+    if (targetId != null) params['target_id'] = targetId;
 
     return params;
   }
