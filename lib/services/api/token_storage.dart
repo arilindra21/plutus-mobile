@@ -23,13 +23,11 @@ class TokenStorage {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(key, value);
       } catch (e) {
-        print('TokenStorage: Error writing $key to SharedPreferences: $e');
       }
     } else {
       try {
         await _secureStorage.write(key: key, value: value);
       } catch (e) {
-        print('TokenStorage: Error writing $key to SecureStorage: $e');
       }
     }
   }
@@ -41,14 +39,12 @@ class TokenStorage {
         final prefs = await SharedPreferences.getInstance();
         return prefs.getString(key);
       } catch (e) {
-        print('TokenStorage: Error reading $key from SharedPreferences: $e');
         return null;
       }
     } else {
       try {
         return await _secureStorage.read(key: key);
       } catch (e) {
-        print('TokenStorage: Error reading $key from SecureStorage: $e');
         return null;
       }
     }
@@ -61,13 +57,11 @@ class TokenStorage {
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove(key);
       } catch (e) {
-        print('TokenStorage: Error deleting $key from SharedPreferences: $e');
       }
     } else {
       try {
         await _secureStorage.delete(key: key);
       } catch (e) {
-        print('TokenStorage: Error deleting $key from SecureStorage: $e');
       }
     }
   }
@@ -124,13 +118,11 @@ class TokenStorage {
         await prefs.remove(_organizationIdKey);
         await prefs.remove(_entityIdKey);
       } catch (e) {
-        print('TokenStorage: Error clearing all from SharedPreferences: $e');
       }
     } else {
       try {
         await _secureStorage.deleteAll();
       } catch (e) {
-        print('TokenStorage: Error clearing all from SecureStorage: $e');
       }
     }
   }

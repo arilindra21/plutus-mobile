@@ -86,7 +86,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
   void _applyOCRAutoFill(ApiExpenseProvider apiProvider) {
     if (_ocrAutoFillApplied) return;
 
-    print('DEBUG: Applying OCR auto-fill...');
 
     // Get OCR data
     final amount = apiProvider.getOCRAmount();
@@ -98,19 +97,16 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       // Auto-fill amount
       if (amount != null && amount > 0) {
         _amountController.text = _ThousandsSeparatorFormatter._format(amount.toStringAsFixed(0));
-        print('DEBUG: Auto-filled amount: $amount');
       }
 
       // Auto-fill date
       if (date != null) {
         _selectedDate = date;
-        print('DEBUG: Auto-filled date: $date');
       }
 
       // Auto-fill currency
       if (currency != null && _currencies.contains(currency)) {
         _selectedCurrency = currency;
-        print('DEBUG: Auto-filled currency: $currency');
       }
 
       // Try to match merchant/vendor by name
@@ -122,9 +118,7 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
         if (matchedVendor != null) {
           _selectedVendorId = matchedVendor.id;
-          print('DEBUG: Auto-filled vendor: ${matchedVendor.name}');
         } else {
-          print('DEBUG: No vendor match for: $merchantName');
         }
       }
 
@@ -2071,24 +2065,18 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         final departmentId = user?.departmentId;
 
         // Debug logging
-        print('DEBUG: user departmentId = $departmentId');
-        print('DEBUG: user departmentName = ${user?.departmentName}');
-        print('DEBUG: departments list count = ${apiProvider.departments.length}');
         if (apiProvider.departments.isNotEmpty) {
-          print('DEBUG: first department = ${apiProvider.departments.first.name} (${apiProvider.departments.first.id})');
         }
 
         // Try to get department name from user profile first, then look up from departments list
         String departmentName = user?.departmentName ?? '';
         if (departmentName.isEmpty && departmentId != null) {
           final dept = apiProvider.departments.where((d) => d.id == departmentId).firstOrNull;
-          print('DEBUG: found department = ${dept?.name}');
           departmentName = dept?.name ?? 'Loading...';
         }
         if (departmentName.isEmpty) {
           departmentName = 'Not Assigned';
         }
-        print('DEBUG: final departmentName = $departmentName');
 
         return Container(
           padding: const EdgeInsets.all(14),
@@ -2692,7 +2680,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         // Upload any new receipts if attached during edit
         final pendingAttachments = apiProvider.pendingAttachments;
         if (pendingAttachments.isNotEmpty) {
-          print('DEBUG: Uploading ${pendingAttachments.length} new receipts for edited expense...');
           int uploadedCount = 0;
 
           for (final file in pendingAttachments) {
@@ -2723,14 +2710,11 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
               if (uploadResult != null) {
                 uploadedCount++;
-                print('DEBUG: Receipt uploaded: ${uploadResult.fileName}');
 
                 // Process OCR for the uploaded receipt
-                print('DEBUG: Triggering OCR for receipt ${uploadResult.id}');
                 await apiProvider.processReceiptOCR(uploadResult.id);
               }
             } catch (e) {
-              print('ERROR: Exception uploading/processing receipt: $e');
             }
           }
 
@@ -2738,11 +2722,9 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
           // IMPORTANT: Refresh expense to get updated receipts list
           if (uploadedCount > 0) {
-            print('DEBUG: Refreshing edited expense to get updated receipts...');
             final refreshedExpense = await apiProvider.getExpense(result.id);
             if (refreshedExpense != null) {
               result = refreshedExpense;
-              print('DEBUG: Expense refreshed. Receipts count: ${result.receipts?.length ?? 0}');
             }
           }
         }
@@ -2783,7 +2765,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         // The temp draft (if any) is deleted after upload.
         final scanItems = apiProvider.scanItems;
         if (scanItems.isNotEmpty) {
-          print('DEBUG: Uploading ${scanItems.length} scanned receipts...');
           for (final item in scanItems) {
             final uploadResult = await apiProvider.uploadReceipt(
               expenseId: result.id,
@@ -2791,7 +2772,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
               fileName: item.fileName,
             );
             if (uploadResult == null) {
-              print('ERROR: Failed to upload scan item: ${item.fileName}');
             }
           }
         } else if (apiProvider.pendingReceiptBytes != null) {
@@ -2802,7 +2782,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
             fileName: 'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg',
           );
           if (uploadResult == null) {
-            print('ERROR: Failed to upload pending receipt');
           }
         }
 
@@ -2814,7 +2793,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         // Upload receipts from manual attachment (gallery)
         final pendingAttachments = apiProvider.pendingAttachments;
         if (pendingAttachments.isNotEmpty) {
-          print('DEBUG: Uploading ${pendingAttachments.length} receipts...');
           int uploadedCount = 0;
           int failedCount = 0;
 
@@ -2839,7 +2817,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                 fileData = file;
               }
 
-              print('DEBUG: Attempting to upload receipt: $fileName');
 
               final uploadResult = await apiProvider.uploadReceipt(
                 expenseId: result.id,
@@ -2849,39 +2826,29 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
               if (uploadResult != null) {
                 uploadedCount++;
-                print('DEBUG: Receipt uploaded successfully: ${uploadResult.fileName}');
-                print('DEBUG: Receipt ID: ${uploadResult.id}');
 
                 // Process OCR for the uploaded receipt
-                print('DEBUG: Triggering OCR processing for receipt ${uploadResult.id}');
                 final ocrResult = await apiProvider.processReceiptOCR(uploadResult.id);
 
                 if (ocrResult != null && ocrResult.ocrData != null) {
-                  print('DEBUG: OCR completed! Data: ${ocrResult.ocrData}');
                   // OCR data is now available in ocrResult.ocrData
                   // You can use this to auto-fill form fields if needed
                 } else {
-                  print('WARNING: OCR processing returned null or no data');
                 }
               } else {
                 failedCount++;
-                print('ERROR: Failed to upload $fileName - uploadResult is null');
-                print('ERROR: Provider error: ${apiProvider.error}');
               }
             } catch (e) {
               failedCount++;
-              print('ERROR: Exception uploading receipt: $e');
             }
           }
 
           apiProvider.clearPendingAttachments();
 
           // IMPORTANT: Refresh expense to get updated receipts list
-          print('DEBUG: Refreshing expense to get updated receipts...');
           final refreshedExpense = await apiProvider.getExpense(result.id);
           if (refreshedExpense != null) {
             result = refreshedExpense;
-            print('DEBUG: Expense refreshed. Receipts count: ${result.receipts?.length ?? 0}');
           }
 
           // Show upload status
@@ -2952,24 +2919,15 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
           }
           // matchResponse.budget null = no matching budget found → proceed normally
 
-          print('DEBUG: ========================================');
-          print('DEBUG: Submitting expense for approval...');
-          print('DEBUG: Expense ID: ${result.id}');
-          print('DEBUG: Current receipts count: ${result.receipts?.length ?? 0}');
-          print('DEBUG: Receipt required: ${result.receiptRequired}');
-          print('DEBUG: Missing receipt: ${result.missingReceipt}');
-          print('DEBUG: ========================================');
 
           final submitSuccess = await apiProvider.submitExpense(result.id);
 
           if (submitSuccess) {
             // submitExpense already updates selectedExpense with the new status
             result = apiProvider.selectedExpense;
-            print('DEBUG: ✓ Expense submitted successfully');
           } else {
             // Submit failed, but expense was created as draft
             final errorMsg = apiProvider.error ?? "Unknown error";
-            print('ERROR: ✗ Submit failed: $errorMsg');
             appProvider.showNotification(
               'Cannot submit: $errorMsg',
               type: 'error',
@@ -2998,8 +2956,6 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
       }
     }
     } catch (e, stackTrace) {
-      print('ERROR: Exception during expense submission: $e');
-      print('Stack trace: $stackTrace');
       appProvider.showNotification(
         'Error: ${e.toString()}',
         type: 'error',

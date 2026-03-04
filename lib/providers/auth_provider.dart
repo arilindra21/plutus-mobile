@@ -103,7 +103,6 @@ class AuthProvider extends ChangeNotifier {
 
     if (result.isSuccess) {
       _user = result.data!.user;
-      print('AUTH DEBUG: user logged in - departmentId: ${_user!.departmentId}, departmentName: ${_user!.departmentName}');
       _capabilities = UserCapabilities.fromPermissions(
         _user!.permissions,
         _user!.jobLevel,
@@ -182,7 +181,6 @@ class AuthProvider extends ChangeNotifier {
     final result = await _authService.getMe();
     if (result.isSuccess) {
       _user = result.data;
-      print('AUTH DEBUG: user loaded - departmentId: ${_user!.departmentId}, departmentName: ${_user!.departmentName}');
       _capabilities = UserCapabilities.fromPermissions(
         _user!.permissions,
         _user!.jobLevel,

@@ -50,7 +50,6 @@ class NotificationProvider extends ChangeNotifier {
       _fetchNotifications();
     });
 
-    debugPrint('[NotificationProvider] Started polling (isApprover: $isApprover)');
   }
 
   /// Stop polling
@@ -65,7 +64,6 @@ class NotificationProvider extends ChangeNotifier {
     _pendingApprovalCount = 0;
     notifyListeners();
 
-    debugPrint('[NotificationProvider] Stopped polling');
   }
 
   /// Force refresh notifications
@@ -85,7 +83,6 @@ class NotificationProvider extends ChangeNotifier {
         await _fetchEmployeeNotifications();
       }
     } catch (e) {
-      debugPrint('[NotificationProvider] Error fetching notifications: $e');
     }
   }
 
@@ -145,7 +142,6 @@ class NotificationProvider extends ChangeNotifier {
 
     if (result.isSuccess) {
       final expenses = result.data!.data;
-      debugPrint('[NotificationProvider] Fetched ${expenses.length} decided expenses');
       bool hasNewNotifications = false;
 
       for (final expense in expenses) {
@@ -158,17 +154,14 @@ class NotificationProvider extends ChangeNotifier {
           // Only notify if it was recently updated (within last 24 hours)
           final updateTime = expense.updatedAt ?? expense.createdAt;
           final hoursSinceUpdate = DateTime.now().difference(updateTime).inHours;
-          debugPrint('[NotificationProvider] Expense ${expense.id}: first time seen, updated ${hoursSinceUpdate}h ago');
           if (hoursSinceUpdate < 24) {
             final notification = _expenseToNotification(expense);
             _notifications.insert(0, notification);
-            debugPrint('[NotificationProvider] Created notification: ${notification.title}');
             hasNewNotifications = true;
           }
           _expenseStatusCache[expense.id] = currentStatus;
         } else if (cachedStatus != currentStatus) {
           // Status changed - create notification
-          debugPrint('[NotificationProvider] Expense ${expense.id}: status changed from $cachedStatus to $currentStatus');
           final notification = _expenseToNotification(expense);
           _notifications.insert(0, notification);
           _expenseStatusCache[expense.id] = currentStatus;
@@ -176,7 +169,6 @@ class NotificationProvider extends ChangeNotifier {
         }
       }
 
-      debugPrint('[NotificationProvider] Total notifications: ${_notifications.length}, unread: $unreadCount');
 
       // Limit notifications to last 50
       if (_notifications.length > 50) {

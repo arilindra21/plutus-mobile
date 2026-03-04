@@ -77,7 +77,6 @@ class _AuthInterceptor extends Interceptor {
         }
       } catch (e) {
         // Ignore token storage errors, continue without auth
-        debugPrint('AuthInterceptor: Error getting token: $e');
       }
     }
 
@@ -117,7 +116,6 @@ class _AuthInterceptor extends Interceptor {
         }
       } catch (e) {
         // Refresh failed, try to clear tokens
-        debugPrint('AuthInterceptor: Token refresh failed: $e');
         try {
           await _tokenStorage.clearTokens();
         } catch (_) {
@@ -137,9 +135,7 @@ class _LoggingInterceptor extends Interceptor {
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     if (kDebugMode) {
-      debugPrint('==> ${options.method} ${options.uri}');
       if (options.data != null) {
-        debugPrint('Body: ${options.data}');
       }
     }
     handler.next(options);
@@ -148,7 +144,6 @@ class _LoggingInterceptor extends Interceptor {
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) {
     if (kDebugMode) {
-      debugPrint('<== ${response.statusCode} ${response.requestOptions.uri}');
     }
     handler.next(response);
   }
@@ -156,8 +151,6 @@ class _LoggingInterceptor extends Interceptor {
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
     if (kDebugMode) {
-      debugPrint('<== ERROR ${err.response?.statusCode} ${err.requestOptions.uri}');
-      debugPrint('Message: ${err.message}');
     }
     handler.next(err);
   }

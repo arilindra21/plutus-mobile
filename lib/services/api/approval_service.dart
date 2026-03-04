@@ -86,7 +86,6 @@ class ApprovalService {
   }) async {
     try {
       final requestData = ApprovalDecisionRequest(comment: comment).toJson();
-      print('DEBUG Reject: taskId=$taskId, comment="$comment", requestData=$requestData');
       final response = await _dio.post(
         '/api/v1/approvals/$taskId/reject',
         data: requestData,
@@ -104,7 +103,6 @@ class ApprovalService {
   }) async {
     try {
       final requestData = ApprovalDecisionRequest(comment: comment).toJson();
-      print('DEBUG Return: taskId=$taskId, comment="$comment", requestData=$requestData');
       final response = await _dio.post(
         '/api/v1/approvals/$taskId/return',
         data: requestData,

@@ -19,11 +19,9 @@ class ExpenseService {
       );
 
       final data = response.data;
-      print('Expenses API response keys: ${data.keys.toList()}');
 
       // API returns 'expenses' key, not 'data'
       final listData = data['expenses'] ?? data['data'];
-      print('Expenses listData type: ${listData?.runtimeType}, length: ${listData?.length}');
 
       final items = (listData as List<dynamic>?)
               ?.map((e) => ExpenseDTO.fromJson(e))

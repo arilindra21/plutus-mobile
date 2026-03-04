@@ -501,8 +501,10 @@ class BudgetTransactionItem {
   final double amount;
   final String currency;
   final String? requesterId;
+  final String? requesterName;
   final String? departmentId;
   final String? categoryId;
+  final String? categoryName;
   final String? description;
   final String? notes;
   final String? createdBy;
@@ -517,8 +519,10 @@ class BudgetTransactionItem {
     required this.amount,
     this.currency = 'IDR',
     this.requesterId,
+    this.requesterName,
     this.departmentId,
     this.categoryId,
+    this.categoryName,
     this.description,
     this.notes,
     this.createdBy,
@@ -535,8 +539,10 @@ class BudgetTransactionItem {
       amount: _parseDouble(json['amount']),
       currency: json['currency'] ?? 'IDR',
       requesterId: json['requesterId'],
+      requesterName: json['requesterName'],
       departmentId: json['departmentId'],
       categoryId: json['categoryId'],
+      categoryName: json['categoryName'],
       description: json['description'],
       notes: json['notes'],
       createdBy: json['createdBy'],

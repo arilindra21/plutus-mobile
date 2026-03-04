@@ -22,25 +22,19 @@ class CategoryService {
       );
 
       final data = response.data;
-      print('Categories API response keys: ${data.keys.toList()}');
 
       // API returns 'categories' key, not 'data'
       final listData = data['categories'] ?? data['data'];
-      print('Categories listData type: ${listData?.runtimeType}, length: ${listData?.length}');
 
       final items = (listData as List<dynamic>?)
               ?.map((e) => CategoryDTO.fromJson(e))
               .toList() ??
           [];
 
-      print('Parsed categories count: ${items.length}');
       return ApiResult.success(items);
     } on DioException catch (e) {
-      print('Categories API error: ${e.message}');
       return ApiResult.fromDioError(e);
     } catch (e, stackTrace) {
-      print('Categories parsing error: $e');
-      print('Stack trace: $stackTrace');
       return ApiResult.failure(ApiError(message: 'Failed to parse categories: $e'));
     }
   }

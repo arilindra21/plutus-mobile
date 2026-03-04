@@ -328,23 +328,16 @@ class ApiExpenseProvider extends ChangeNotifier {
   /// This ensures receipts are properly loaded even if not included in getExpense response
   Future<void> refreshReceipts(String expenseId) async {
     try {
-      print('DEBUG: refreshReceipts called for expenseId: $expenseId');
-      print('DEBUG: _selectedExpenseId: ${_selectedExpense?.id}');
 
       final result = await _receiptService.listReceipts(expenseId);
 
-      print('DEBUG: Receipts API result success: ${result.isSuccess}');
-      print('DEBUG: Receipts API data length: ${result.data?.length ?? 0}');
 
       if (result.isSuccess) {
-        print('DEBUG: Receipts data: $result.data');
 
         if (_selectedExpense == null) {
-          print('DEBUG: _selectedExpense is null, cannot update receipts');
           return;
         }
 
-        print('DEBUG: ID match: ${_selectedExpense!.id == expenseId}');
 
         // Update the selected expense with the fetched receipts
         _selectedExpense = ExpenseDTO(
@@ -396,16 +389,13 @@ class ApiExpenseProvider extends ChangeNotifier {
           receipts: result.data, // Use the fetched receipts
         );
 
-        print('DEBUG: Updated expense receipts count: ${_selectedExpense!.receipts?.length ?? 0}');
         notifyListeners();
 
         // Add a small delay to ensure UI has time to rebuild
         await Future.delayed(const Duration(milliseconds: 100));
       } else {
-        print('DEBUG: Receipts API failed: ${result.error}');
       }
     } catch (e) {
-      print('ERROR: Failed to refresh receipts: $e');
     }
   }
 
@@ -699,18 +689,14 @@ class ApiExpenseProvider extends ChangeNotifier {
     _error = null;
     notifyListeners();
 
-    print('DEBUG: Provider calling processOCR for receipt $receiptId');
     final result = await _receiptService.processOCR(receiptId);
 
     _isSubmitting = false;
     if (result.isSuccess) {
-      print('DEBUG: OCR processed successfully');
-      print('DEBUG: OCR Data: ${result.data?.ocrData}');
       notifyListeners();
       return result.data;
     } else {
       _error = result.error?.toString();
-      print('ERROR: OCR processing failed: $_error');
       notifyListeners();
       return null;
     }
@@ -827,6 +813,18 @@ class ApiExpenseProvider extends ChangeNotifier {
       return result.data!.data.first;
     }
     return null;
+  }
+
+  /// Fetch all inbox tasks and return as a Map keyed by expenseId (= targetId).
+  /// Does NOT modify global _approvalTasks state — safe to call from any screen.
+  Future<Map<String, ApprovalTaskDTO>> fetchInboxAsMap({int pageSize = 100}) async {
+    final result = await _approvalService.getInbox(
+      ApprovalInboxParams(pageSize: pageSize),
+    );
+    if (result.isSuccess) {
+      return {for (final task in result.data!.data) task.expenseId: task};
+    }
+    return {};
   }
 
   /// Fetch inbox summary
@@ -1190,7 +1188,6 @@ class ApiExpenseProvider extends ChangeNotifier {
         } catch (e) {
           // Exception during fetch (403, 404, etc.)
           failedIds.add(id);
-          print('Could not fetch expense $id: $e');
         }
         return null;
       });
@@ -1240,9 +1237,7 @@ class ApiExpenseProvider extends ChangeNotifier {
     final result = await _categoryService.listCategories();
     if (result.isSuccess) {
       _categories = result.data!;
-      print('Categories loaded: ${_categories.length}');
     } else {
-      print('Failed to load categories: ${result.error}');
     }
   }
 
@@ -1561,7 +1556,6 @@ class ApiExpenseProvider extends ChangeNotifier {
         _pendingReceiptBytes = await xFile.readAsBytes() as Uint8List;
       }
     } catch (e) {
-      print('ERROR: Failed to read receipt bytes: $e');
     }
 
     notifyListeners();
@@ -1602,7 +1596,6 @@ class ApiExpenseProvider extends ChangeNotifier {
       _ocrError = null;
       notifyListeners();
 
-      print('DEBUG OCR: Creating draft expense...');
       final draftExpense = await createExpense(
         amount: 0, // Will be filled by OCR
         categoryId: categoryId,
@@ -1618,13 +1611,11 @@ class ApiExpenseProvider extends ChangeNotifier {
       }
 
       _tempDraftExpenseId = draftExpense.id;
-      print('DEBUG OCR: Draft expense created: ${draftExpense.id}');
 
       // Step 2: Upload receipt
       _ocrState = OCRProcessingState.uploading;
       notifyListeners();
 
-      print('DEBUG OCR: Uploading receipt...');
 
       // Prepare file data
       dynamic fileData;
@@ -1654,23 +1645,17 @@ class ApiExpenseProvider extends ChangeNotifier {
         throw Exception(_error ?? 'Failed to upload receipt');
       }
 
-      print('DEBUG OCR: Receipt uploaded: ${uploadResult.id}');
 
       // Step 3: Trigger OCR
       _ocrState = OCRProcessingState.processingOCR;
       notifyListeners();
 
-      print('DEBUG OCR: Processing OCR...');
       final ocrResult = await processReceiptOCR(uploadResult.id);
 
       if (ocrResult == null) {
         throw Exception(_error ?? 'OCR processing failed');
       }
 
-      print('DEBUG OCR: OCR completed!');
-      print('DEBUG OCR: Merchant: ${ocrResult.ocrData?['merchantName']}');
-      print('DEBUG OCR: Amount: ${ocrResult.ocrData?['totalAmount']}');
-      print('DEBUG OCR: Date: ${ocrResult.ocrData?['transactionDate']}');
 
       // Step 4: Success!
       _ocrState = OCRProcessingState.completed;
@@ -1679,7 +1664,6 @@ class ApiExpenseProvider extends ChangeNotifier {
 
       return ocrResult;
     } catch (e) {
-      print('ERROR OCR: $e');
       _ocrState = OCRProcessingState.failed;
       _ocrError = e.toString();
       notifyListeners();
@@ -1697,7 +1681,6 @@ class ApiExpenseProvider extends ChangeNotifier {
       try {
         await deleteExpense(_tempDraftExpenseId!);
       } catch (e) {
-        print('WARNING: Failed to delete temp draft: $e');
       }
       _tempDraftExpenseId = null;
     }
@@ -1796,7 +1779,6 @@ class ApiExpenseProvider extends ChangeNotifier {
       }
       notifyListeners();
     } catch (e) {
-      print('ERROR processScanItems: $e');
       _ocrState = OCRProcessingState.failed;
       _ocrError = e.toString();
       notifyListeners();

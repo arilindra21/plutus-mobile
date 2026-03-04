@@ -113,7 +113,6 @@ class ApiTransactionProvider extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      debugPrint('Error loading pending receipt transactions: $e');
     }
   }
 
@@ -127,7 +126,6 @@ class ApiTransactionProvider extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      debugPrint('Error loading transaction summary: $e');
     }
   }
 

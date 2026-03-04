@@ -50,7 +50,6 @@ class ReceiptService {
         'file': multipartFile,
       });
 
-      print('DEBUG: Uploading receipt for expense $expenseId, fileName=$finalFileName');
 
       final response = await _dio.post(
         '/api/v1/expenses/$expenseId/receipts',
@@ -63,10 +62,8 @@ class ReceiptService {
         ),
       );
 
-      print('DEBUG: Receipt uploaded successfully: ${response.data}');
       return ApiResult.success(ReceiptDTO.fromJson(response.data));
     } on DioException catch (e) {
-      print('ERROR: Failed to upload receipt: ${e.message}');
       return ApiResult.fromDioError(e);
     }
   }
@@ -77,7 +74,6 @@ class ReceiptService {
   /// Returns the file content and filename.
   Future<ApiResult<ReceiptDownload>> downloadReceipt(String receiptId) async {
     try {
-      print('DEBUG: Downloading receipt $receiptId');
 
       final response = await _dio.get(
         '/api/v1/receipts/$receiptId/download',
@@ -102,10 +98,8 @@ class ReceiptService {
         contentType: response.headers.value('content-type') ?? 'image/jpeg',
       );
 
-      print('DEBUG: Receipt downloaded: fileName=$fileName, size=${download.data.length}');
       return ApiResult.success(download);
     } on DioException catch (e) {
-      print('ERROR: Failed to download receipt: ${e.message}');
       return ApiResult.fromDioError(e);
     }
   }
@@ -120,8 +114,6 @@ class ReceiptService {
       final responseData = response.data as Map<String, dynamic>?;
       final receiptsArray = responseData?['receipts'] as List<dynamic>?;
 
-      print('DEBUG: listReceipts - response.data type: ${response.data.runtimeType}');
-      print('DEBUG: listReceipts - receiptsArray length: ${receiptsArray?.length ?? 0}');
 
       final receipts = receiptsArray
               ?.map((e) => ReceiptDTO.fromJson(e))
@@ -130,7 +122,6 @@ class ReceiptService {
 
       return ApiResult.success(receipts);
     } on DioException catch (e) {
-      print('ERROR: listReceipts DioException: ${e.message}');
       return ApiResult.fromDioError(e);
     }
   }
@@ -138,11 +129,9 @@ class ReceiptService {
   /// Delete receipt
   Future<ApiResult<void>> deleteReceipt(String receiptId) async {
     try {
-      print('DEBUG: Deleting receipt $receiptId');
       await _dio.delete('/api/v1/receipts/$receiptId');
       return ApiResult.success(null);
     } on DioException catch (e) {
-      print('ERROR: Failed to delete receipt: ${e.message}');
       return ApiResult.fromDioError(e);
     }
   }
@@ -165,14 +154,11 @@ class ReceiptService {
   /// [receiptId] - The receipt UUID
   Future<ApiResult<ReceiptDTO>> processOCR(String receiptId) async {
     try {
-      print('DEBUG: Processing OCR for receipt $receiptId');
 
       final response = await _dio.post('/api/v1/receipts/$receiptId/ocr');
 
-      print('DEBUG: OCR processed successfully: ${response.data}');
       return ApiResult.success(ReceiptDTO.fromJson(response.data));
     } on DioException catch (e) {
-      print('ERROR: Failed to process OCR: ${e.message}');
       return ApiResult.fromDioError(e);
     }
   }
@@ -184,14 +170,11 @@ class ReceiptService {
   /// [receiptId] - The receipt UUID
   Future<ApiResult<ReceiptDTO>> getReceipt(String receiptId) async {
     try {
-      print('DEBUG: Fetching receipt $receiptId');
 
       final response = await _dio.get('/api/v1/receipts/$receiptId');
 
-      print('DEBUG: Receipt fetched: ${response.data}');
       return ApiResult.success(ReceiptDTO.fromJson(response.data));
     } on DioException catch (e) {
-      print('ERROR: Failed to fetch receipt: ${e.message}');
       return ApiResult.fromDioError(e);
     }
   }

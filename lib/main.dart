@@ -22,6 +22,7 @@ import 'screens/expenses/card_transactions_screen.dart';
 // Budget screens
 import 'screens/budget/budget_overview_screen.dart';
 import 'screens/budget/budget_category_detail_screen.dart';
+import 'screens/budget/budget_history_screen.dart';
 
 // Cards screens
 import 'screens/cards/cards_screen.dart';
@@ -351,6 +352,9 @@ class _AppRouterState extends State<AppRouter> {
 
       case 'budgetCategoryDetail':
         return const BudgetCategoryDetailScreen();
+
+      case 'budgetHistory':
+        return const BudgetHistoryScreen();
 
       // Cards
       case 'cards':

@@ -20,8 +20,8 @@ class BudgetCategoryDetailScreen extends StatefulWidget {
 class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen> {
   bool _isInitialized = false;
   bool _isNavigating = false;
-  List<ExpenseDTO> _budgetExpenses = [];
-  bool _isLoadingExpenses = false;
+  // Map from expenseId (= targetId from /inbox = sourceId from /history) → ApprovalTaskDTO
+  Map<String, ApprovalTaskDTO> _inboxTaskMap = {};
 
   @override
   void initState() {
@@ -33,48 +33,22 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
 
   Future<void> _initializeData() async {
     if (_isInitialized) return;
+    _isInitialized = true; // Set early to prevent re-entry
 
     final apiProvider = context.read<ApiExpenseProvider>();
     final selectedBudgetId = apiProvider.selectedBudgetCategory;
 
+    // Start inbox fetch immediately — runs concurrently with analytics
+    final Future<Map<String, ApprovalTaskDTO>> inboxFuture = apiProvider.fetchInboxAsMap();
+
+    // Fetch analytics concurrently (if budget is selected)
     if (selectedBudgetId != null && selectedBudgetId.isNotEmpty) {
       await apiProvider.fetchBudgetAnalytics(selectedBudgetId);
     }
 
-    // After analytics (history) loaded, fetch each expense by sourceId
-    await _fetchExpensesFromHistory(apiProvider);
-    _isInitialized = true;
-  }
-
-  /// Fetch each expense by sourceId from budget history transactions.
-  /// This is necessary because the expense list may not include expenses
-  /// from other users (e.g., subordinates in a manager's budget view).
-  Future<void> _fetchExpensesFromHistory(ApiExpenseProvider apiProvider) async {
-    final history = apiProvider.selectedBudgetHistory;
-    if (history == null) return;
-
-    final expenseIds = history.transactions
-        .where((tx) => tx.sourceType == 'expense' && tx.sourceId.isNotEmpty)
-        .map((tx) => tx.sourceId)
-        .toSet()
-        .toList();
-
-    if (expenseIds.isEmpty) return;
-
-    setState(() => _isLoadingExpenses = true);
-
-    // Use fetchExpensesByIds to avoid disturbing global provider state
-    final fetched = await apiProvider.fetchExpensesByIds(expenseIds);
-
-    // Sort newest first
-    fetched.sort((a, b) => b.expenseDate.compareTo(a.expenseDate));
-
-    if (mounted) {
-      setState(() {
-        _budgetExpenses = fetched;
-        _isLoadingExpenses = false;
-      });
-    }
+    // Await inbox result — explicitly typed, no cast needed
+    final inboxMap = await inboxFuture;
+    if (mounted) setState(() => _inboxTaskMap = inboxMap);
   }
 
   /// Navigate to expense detail from a budget history item.
@@ -89,30 +63,24 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
     setState(() => _isNavigating = true);
 
     try {
-      // Fetch expense and approval task in parallel without disturbing global state
-      final results = await Future.wait([
-        apiProvider.fetchExpensesByIds([tx.sourceId]),
-        apiProvider.fetchApprovalTaskForExpense(tx.sourceId),
-      ]);
+      // Use already-loaded inbox map — sourceId == targetId == expenseId
+      final approvalTask = _inboxTaskMap[tx.sourceId];
 
       if (!mounted) return;
 
-      final expenseList = results[0] as List<ExpenseDTO>;
-      final expense = expenseList.isNotEmpty ? expenseList.first : null;
-      final approvalTask = results[1] as ApprovalTaskDTO?;
-
-      if (expense == null) {
-        appProvider.showNotification('Expense not found', type: 'error');
-        return;
-      }
-
       if (approvalTask != null) {
-        // Manager has a pending approval task → go to approver detail
+        // Approval task found → go to approver detail
         apiProvider.setSelectedApprovalTask(approvalTask);
         appProvider.navigateTo('approverExpenseDetail');
       } else {
-        // No pending approval → go to regular expense detail
-        apiProvider.setSelectedExpense(expense);
+        // No approval task — fetch expense and go to transaction detail
+        final fetched = await apiProvider.fetchExpensesByIds([tx.sourceId]);
+        if (!mounted) return;
+        if (fetched.isEmpty) {
+          appProvider.showNotification('Expense not found', type: 'error');
+          return;
+        }
+        apiProvider.setSelectedExpense(fetched.first);
         appProvider.navigateTo('transactionDetail');
       }
     } finally {
@@ -169,143 +137,128 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
     final trend = apiProvider.selectedBudgetTrend;
     final history = apiProvider.selectedBudgetHistory;
 
-    // Use expenses fetched directly by sourceId from history
-    final budgetExpenses = _budgetExpenses;
+    // Build deduplicated expense items directly from history transactions.
+    final expenseItems = _buildExpenseItems(history);
+
+    // Build sections separately to avoid spread/collection-if issues in DDC
+    final List<Widget> sections = [];
+
+    // Budget Summary Card
+    sections.add(_buildApiSummaryCard(budget, utilization));
+
+    // Utilization Breakdown by Category
+    if (utilization != null) {
+      final cats = utilization.byCategory;
+      if (cats.isNotEmpty) {
+        sections.add(Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          child: Text('Spending by Category',
+              style: AppTypography.headingSmall.copyWith(fontSize: AppTypography.fontSizeLg)),
+        ));
+        sections.add(const SizedBox(height: AppSpacing.md));
+        for (final item in cats) {
+          sections.add(_buildBreakdownItem(item));
+        }
+        sections.add(const SizedBox(height: AppSpacing.lg));
+      }
+    }
+
+    // Spending Trend
+    if (trend != null) {
+      final points = trend.dataPoints;
+      if (points.isNotEmpty) {
+        sections.add(Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Spending Trend',
+                  style: AppTypography.headingSmall.copyWith(fontSize: AppTypography.fontSizeLg)),
+              Text('${trend.totalPeriods} periods',
+                  style: AppTypography.caption.copyWith(color: AppColors.textMuted)),
+            ],
+          ),
+        ));
+        sections.add(const SizedBox(height: AppSpacing.md));
+        final trendSlice = points.length > 3 ? points.sublist(0, 3) : points;
+        for (final point in trendSlice) {
+          sections.add(_buildTrendItem(point));
+        }
+        sections.add(const SizedBox(height: AppSpacing.lg));
+      }
+    }
+
+    // Recent Expenses — built from history transactions directly
+    final recentExpenseItems = <Widget>[];
+    if (expenseItems.isEmpty) {
+      recentExpenseItems.add(_buildEmptyState());
+    } else {
+      for (final tx in expenseItems) {
+        final isPending = _inboxTaskMap.containsKey(tx.sourceId);
+        recentExpenseItems.add(_HistoryExpenseItem(
+          tx: tx,
+          isPending: isPending,
+          onTap: () => _navigateToHistoryExpense(tx),
+        ));
+      }
+    }
+    sections.add(Padding(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Recent Expenses',
+                  style: AppTypography.headingSmall.copyWith(fontSize: AppTypography.fontSizeLg)),
+              Text('${expenseItems.length} items',
+                  style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted)),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          ...recentExpenseItems,
+        ],
+      ),
+    ));
+
+    sections.add(const SizedBox(height: AppSpacing.xxl));
 
     return RefreshIndicator(
       onRefresh: () async {
+        final Future<Map<String, ApprovalTaskDTO>> inboxFuture = apiProvider.fetchInboxAsMap();
         if (budget.id.isNotEmpty) {
           await apiProvider.fetchBudgetAnalytics(budget.id);
         }
-        await _fetchExpensesFromHistory(apiProvider);
+        final inboxMap = await inboxFuture;
+        if (mounted) setState(() => _inboxTaskMap = inboxMap);
       },
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Budget Summary Card
-            _buildApiSummaryCard(budget, utilization),
-
-            // Utilization Breakdown by Category (if available)
-            if (utilization != null && utilization.byCategory.isNotEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                child: Text(
-                  'Spending by Category',
-                  style: AppTypography.headingSmall.copyWith(
-                    fontSize: AppTypography.fontSizeLg,
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              ...utilization.byCategory.map((item) => _buildBreakdownItem(item)),
-              const SizedBox(height: AppSpacing.lg),
-            ],
-
-            // Spending Trend Section (if available)
-            if (trend != null && trend.dataPoints.isNotEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Spending Trend',
-                      style: AppTypography.headingSmall.copyWith(
-                        fontSize: AppTypography.fontSizeLg,
-                      ),
-                    ),
-                    Text(
-                      '${trend.totalPeriods} periods',
-                      style: AppTypography.caption.copyWith(color: AppColors.textMuted),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              ...trend.dataPoints.take(3).map((point) => _buildTrendItem(point)),
-              const SizedBox(height: AppSpacing.lg),
-            ],
-
-            // Transaction History Section (if available)
-            if (history != null && history.transactions.isNotEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Budget Transactions',
-                      style: AppTypography.headingSmall.copyWith(
-                        fontSize: AppTypography.fontSizeLg,
-                      ),
-                    ),
-                    Text(
-                      '${history.totalCount} items',
-                      style: AppTypography.caption.copyWith(color: AppColors.textMuted),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                child: Column(
-                  children: history.transactions.map((tx) => _buildHistoryItem(tx)).toList(),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-            ],
-
-            // Recent Expenses Section
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Recent Expenses',
-                        style: AppTypography.headingSmall.copyWith(
-                          fontSize: AppTypography.fontSizeLg,
-                        ),
-                      ),
-                      Text(
-                        '${budgetExpenses.length} items',
-                        style: AppTypography.bodySmall.copyWith(
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  if (_isLoadingExpenses)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
-                      child: Center(child: CupertinoActivityIndicator(radius: 14)),
-                    )
-                  else if (budgetExpenses.isEmpty)
-                    _buildEmptyState()
-                  else
-                    ...budgetExpenses.map((expense) => _ApiExpenseItem(
-                          expense: expense,
-                          onTap: () {
-                            apiProvider.setSelectedExpense(expense);
-                            context.read<AppProvider>().navigateTo('transactionDetail');
-                          },
-                        )),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: AppSpacing.xxl),
-          ],
+          children: sections,
         ),
       ),
     );
+  }
+
+  /// Build deduplicated expense items from budget history.
+  /// Returns one BudgetTransactionItem per unique expense sourceId,
+  /// preferring 'add_pending' operations which carry requesterName/categoryName.
+  List<BudgetTransactionItem> _buildExpenseItems(BudgetHistoryDTO? history) {
+    if (history == null) return [];
+    final Map<String, BudgetTransactionItem> best = {};
+    try {
+      for (final tx in history.transactions) {
+        if (tx.sourceType != 'expense' || tx.sourceId.isEmpty) continue;
+        final existing = best[tx.sourceId];
+        if (existing == null || tx.operation == 'add_pending') {
+          best[tx.sourceId] = tx;
+        }
+      }
+    } catch (_) {}
+    return best.values.toList();
   }
 
   Widget _buildBreakdownItem(BudgetUtilizationBreakdown item) {
@@ -635,6 +588,35 @@ class _BudgetCategoryDetailScreenState extends State<BudgetCategoryDetailScreen>
               ],
             ),
           ),
+          GestureDetector(
+            onTap: () => context.read<AppProvider>().navigateTo('budgetHistory'),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.xs + 2,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.bgSubtle,
+                borderRadius: AppRadius.borderRadiusFull,
+                border: Border.all(color: AppColors.borderDefault),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.history, size: 16, color: AppColors.textSecondary),
+                  const SizedBox(width: 4),
+                  Text(
+                    'History',
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textSecondary,
+                      fontWeight: AppTypography.fontWeightMedium,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -944,6 +926,122 @@ class _ApiExpenseItem extends StatelessWidget {
                   ),
                 ),
                 StatusBadge(status: expense.status, small: true),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Expense item built from BudgetTransactionItem (history data).
+/// Shows pending badge when the expense is still in the approvals inbox.
+class _HistoryExpenseItem extends StatelessWidget {
+  final BudgetTransactionItem tx;
+  final bool isPending;
+  final VoidCallback onTap;
+
+  const _HistoryExpenseItem({
+    required this.tx,
+    required this.isPending,
+    required this.onTap,
+  });
+
+  String _getCategoryIcon() {
+    final name = (tx.categoryName ?? '').toLowerCase();
+    if (name.contains('transport') || name.contains('travel')) return '🚗';
+    if (name.contains('food') || name.contains('meal') || name.contains('makan')) return '🍽️';
+    if (name.contains('office') || name.contains('supplies')) return '📦';
+    if (name.contains('entertainment') || name.contains('client')) return '🎭';
+    if (name.contains('tech') || name.contains('it') || name.contains('software')) return '💻';
+    if (name.contains('marketing') || name.contains('ads')) return '📢';
+    if (name.contains('training') || name.contains('education')) return '📚';
+    return '💰';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = tx.description?.isNotEmpty == true
+        ? tx.description!
+        : tx.categoryName ?? 'Expense';
+    final subtitle = tx.requesterName ?? '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.bgDefault,
+        borderRadius: AppRadius.borderRadiusMd,
+        boxShadow: AppShadows.card,
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: AppRadius.borderRadiusMd,
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.bgSubtle,
+                borderRadius: AppRadius.borderRadiusMd,
+              ),
+              child: Center(
+                child: Text(_getCategoryIcon(), style: const TextStyle(fontSize: 20)),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: AppTypography.bodyMedium.copyWith(
+                      fontWeight: AppTypography.fontWeightMedium,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: AppTypography.caption.copyWith(color: AppColors.textMuted),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  formatRupiah(tx.amount),
+                  style: AppTypography.bodyMedium.copyWith(
+                    fontWeight: AppTypography.fontWeightSemibold,
+                  ),
+                ),
+                if (isPending)
+                  Container(
+                    margin: const EdgeInsets.only(top: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withOpacity(0.15),
+                      borderRadius: AppRadius.borderRadiusFull,
+                    ),
+                    child: Text(
+                      'Pending',
+                      style: AppTypography.caption.copyWith(
+                        color: AppColors.warning,
+                        fontSize: 10,
+                        fontWeight: AppTypography.fontWeightMedium,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ],
