@@ -432,7 +432,7 @@ class _ApiLoginScreenState extends State<ApiLoginScreen> with SingleTickerProvid
                   child: _buildSocialButton(
                     icon: CupertinoIcons.device_phone_portrait,
                     label: 'SSO',
-                    onTap: () {},
+                    onTap: _showSSODialog,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -589,6 +589,193 @@ class _ApiLoginScreenState extends State<ApiLoginScreen> with SingleTickerProvid
           ),
         ),
       ],
+    );
+  }
+
+  void _showSSODialog() {
+    final ssoEmailController = TextEditingController();
+    final ssoPasswordController = TextEditingController();
+    final ssoFormKey = GlobalKey<FormState>();
+    bool obscurePassword = true;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Form(
+                  key: ssoFormKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header
+                      Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: FintechColors.primary.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              CupertinoIcons.device_phone_portrait,
+                              color: FintechColors.primary,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Text(
+                              'SSO Login',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () => Navigator.pop(dialogContext),
+                            child: Icon(
+                              CupertinoIcons.xmark_circle_fill,
+                              color: AppColors.textMuted,
+                              size: 24,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Sign in with your SSO credentials',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Email field
+                      TextFormField(
+                        controller: ssoEmailController,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: InputDecoration(
+                          labelText: 'Email',
+                          hintText: 'Enter your SSO email',
+                          prefixIcon: const Icon(CupertinoIcons.mail_solid, size: 20),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) return 'Email is required';
+                          if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                            return 'Please enter a valid email';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Password field
+                      TextFormField(
+                        controller: ssoPasswordController,
+                        obscureText: obscurePassword,
+                        decoration: InputDecoration(
+                          labelText: 'Password',
+                          hintText: 'Enter your SSO password',
+                          prefixIcon: const Icon(CupertinoIcons.lock_fill, size: 20),
+                          suffixIcon: GestureDetector(
+                            onTap: () => setDialogState(() => obscurePassword = !obscurePassword),
+                            child: Icon(
+                              obscurePassword
+                                  ? CupertinoIcons.eye_slash_fill
+                                  : CupertinoIcons.eye_fill,
+                              size: 20,
+                            ),
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) return 'Password is required';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Login button
+                      Consumer<AuthProvider>(
+                        builder: (context, auth, _) {
+                          return SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: ElevatedButton(
+                              onPressed: auth.isLoading
+                                  ? null
+                                  : () async {
+                                      if (!ssoFormKey.currentState!.validate()) return;
+
+                                      final authProvider = dialogContext.read<AuthProvider>();
+                                      final appProvider = dialogContext.read<AppProvider>();
+
+                                      final success = await authProvider.loginSSO(
+                                        email: ssoEmailController.text.trim(),
+                                        password: ssoPasswordController.text,
+                                      );
+
+                                      if (success && mounted) {
+                                        Navigator.pop(dialogContext);
+                                        appProvider.loginWithApi(authProvider.user!);
+                                      }
+                                    },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: FintechColors.primary,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                elevation: 0,
+                              ),
+                              child: auth.isLoading
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        valueColor: AlwaysStoppedAnimation(Colors.white),
+                                      ),
+                                    )
+                                  : const Text(
+                                      'Sign In with SSO',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

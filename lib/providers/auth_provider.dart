@@ -147,6 +147,10 @@ class AuthProvider extends ChangeNotifier {
       );
       _status = AuthStatus.authenticated;
       _isLoading = false;
+
+      // Fetch full user profile to get department info
+      await refreshProfile();
+
       notifyListeners();
       return true;
     } else {
