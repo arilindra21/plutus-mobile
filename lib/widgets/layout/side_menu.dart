@@ -283,6 +283,18 @@ class SideMenu extends StatelessWidget {
                             ],
                           ],
                         ),
+                        // Show department as organization context
+                        if (apiUser?.departmentName != null && apiUser!.departmentName!.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            apiUser.departmentName!,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.white70,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ],
                     ),
                   ),

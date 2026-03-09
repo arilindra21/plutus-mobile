@@ -97,7 +97,10 @@ class _ApproverExpenseDetailScreenState extends State<ApproverExpenseDetailScree
                   ),
                 ),
               ),
-              if (isPending) _buildApiActionButtons(context, task),
+              if (isPending && !_isSelfApproval(task, apiProvider))
+                _buildApiActionButtons(context, task),
+              if (isPending && _isSelfApproval(task, apiProvider))
+                _buildSelfApprovalWarning(),
             ],
           ),
         );
@@ -636,14 +639,30 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
     String vendor = expense?.merchant ?? task.merchant;
     if (vendor == 'Unknown Merchant') vendor = 'Unknown Vendor';
 
-    // Get category - prefer task (from API), then expense
-    String category = task.category;
-    if (category == 'Other' && expense != null) {
+    // Get category - resolve from categoryId via reference data (most reliable),
+    // then fallback to expense.categoryName, then task.category.
+    // Try multiple sources for categoryId: selectedExpense, embedded task.expense, expenses list.
+    final categoryId = expense?.categoryId
+        ?? task.expense?.categoryId
+        ?? apiProvider.expenses.where((e) => e.id == task.expenseId).firstOrNull?.categoryId;
+    String category;
+    if (categoryId != null && categoryId.isNotEmpty) {
+      final resolved = apiProvider.getCategoryName(categoryId);
+      category = resolved != 'Uncategorized' ? resolved : (expense?.categoryName ?? task.category);
+    } else if (expense != null && expense.category.isNotEmpty && expense.category != 'Other' && expense.category != 'Uncategorized') {
       category = expense.category;
+    } else {
+      category = task.category;
     }
 
-    // Get category icon
-    String? categoryIcon = task.categoryIcon ?? expense?.categoryIcon;
+    // Get category icon - resolve from categoryId via reference data
+    String? categoryIcon;
+    if (categoryId != null && categoryId.isNotEmpty) {
+      final resolvedIcon = apiProvider.getCategoryIcon(categoryId);
+      categoryIcon = resolvedIcon;
+    } else {
+      categoryIcon = expense?.categoryIcon ?? task.categoryIcon;
+    }
 
     // Get description
     String? description = task.description;
@@ -1122,6 +1141,55 @@ extension _WidgetBuilders on _ApproverExpenseDetailScreenState {
         const Divider(height: 1),
         const SizedBox(height: AppSpacing.md),
       ],
+    );
+  }
+
+  /// Check if the current user is the same as the expense requester (self-approval)
+  bool _isSelfApproval(ApprovalTaskDTO task, ApiExpenseProvider apiProvider) {
+    final currentUserId = apiProvider.currentUserProfile?.id;
+    if (currentUserId == null || currentUserId.isEmpty) return false;
+    final requesterId = task.requesterId;
+    if (requesterId.isEmpty) return false;
+    return currentUserId == requesterId;
+  }
+
+  /// Warning banner shown when a manager tries to approve their own expense
+  Widget _buildSelfApprovalWarning() {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.bgDefault,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF3CD),
+          borderRadius: AppRadius.borderRadiusLg,
+          border: Border.all(color: const Color(0xFFFFD93D)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Color(0xFF856404), size: 24),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                'You cannot approve your own expense. This task must be handled by another approver.',
+                style: AppTypography.bodySmall.copyWith(
+                  color: const Color(0xFF856404),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

@@ -213,8 +213,15 @@ class ApiExpenseProvider extends ChangeNotifier {
   }
 
   /// Check if current user can approve this expense
+  /// Returns false if the expense was submitted by the current user (self-approval)
   bool canApproveExpense(String expenseId) {
-    return getApprovalTaskForExpense(expenseId) != null;
+    final task = getApprovalTaskForExpense(expenseId);
+    if (task == null) return false;
+    // Prevent self-approval: check if requester is the same as current user
+    if (_currentUserId != null && task.requesterId == _currentUserId) {
+      return false;
+    }
+    return true;
   }
 
   // ============ Expense Operations ============

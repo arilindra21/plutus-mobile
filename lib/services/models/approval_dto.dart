@@ -156,11 +156,16 @@ class ApprovalTaskDTO {
   }
 
   String get category {
+    // Prefer expense category (source of truth) over task-level category
+    final expenseCategory = expense?.category;
+    if (expenseCategory != null && expenseCategory.isNotEmpty && expenseCategory != 'Other') {
+      return expenseCategory;
+    }
     final name = _categoryName;
     if (name != null && name.isNotEmpty) {
       return name;
     }
-    return expense?.category ?? 'Other';
+    return expenseCategory ?? 'Other';
   }
 
   String? get categoryIcon => expense?.categoryIcon;

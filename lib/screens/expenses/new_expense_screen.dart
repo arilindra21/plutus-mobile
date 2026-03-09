@@ -26,6 +26,9 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
   final _amountController = TextEditingController();
   final _notesController = TextEditingController();
 
+  // Saved reference for safe use in dispose()
+  ApiExpenseProvider? _apiProviderRef;
+
   String? _selectedCategoryId;
   String? _selectedDepartmentId;
   String? _selectedCostCenterId;
@@ -57,22 +60,37 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _clearStaleReceiptState();
       _initializeData();
     });
+  }
+
+  /// Always clear stale receipt/OCR state when entering the form,
+  /// unless coming from scan flow which carries receipt data intentionally.
+  void _clearStaleReceiptState() {
+    final apiProvider = context.read<ApiExpenseProvider>();
+    _apiProviderRef = apiProvider; // Save for dispose()
+    final appProvider = context.read<AppProvider>();
+    final params = appProvider.screenParams;
+    final isFromScan = params?['fromScan'] == true;
+
+    // Set _isFromScan early and consume params so they don't leak to next navigation
+    _isFromScan = isFromScan;
+    appProvider.clearNavigationParams();
+
+    if (!isFromScan) {
+      apiProvider.clearOCRState();
+      apiProvider.clearPendingAttachments();
+    }
   }
 
   Future<void> _initializeData() async {
     if (_isInitialized) return;
 
     final apiProvider = context.read<ApiExpenseProvider>();
-    final appProvider = context.read<AppProvider>();
 
     await apiProvider.fetchReferenceData();
     _loadEditingData();
-
-    // Check if coming from scan with pending receipt
-    final params = appProvider.screenParams;
-    _isFromScan = params?['fromScan'] == true;
 
     // Auto-fill form from OCR result (reference data must be loaded first
     // so vendor matching has the full vendors list available)
@@ -224,9 +242,8 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
   @override
   void dispose() {
-    // Clear OCR state when leaving
-    final apiProvider = context.read<ApiExpenseProvider>();
-    apiProvider.clearOCRState();
+    // Clear OCR state when leaving (use saved ref, context is unsafe in dispose)
+    _apiProviderRef?.clearOCRState();
 
     _amountController.dispose();
     _notesController.dispose();
@@ -1030,15 +1047,26 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
   }
 
   Widget _buildInfoBanner() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-      child: AlertBanner(
-        icon: CupertinoIcons.info_circle_fill,
-        iconColor: FintechColors.categoryBlue,
-        backgroundColor: FintechColors.categoryBlueBg,
-        title: 'Manual Entry',
-        subtitle: 'This expense will need a receipt attachment before submission.',
-      ),
+    return Consumer<ApiExpenseProvider>(
+      builder: (context, apiProvider, _) {
+        final hasReceipt = apiProvider.hasScanItems ||
+            apiProvider.pendingReceiptBytes != null ||
+            apiProvider.pendingAttachments.isNotEmpty;
+
+        // Don't show "needs receipt" banner when receipt is already attached
+        if (hasReceipt) return const SizedBox.shrink();
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: AlertBanner(
+            icon: CupertinoIcons.info_circle_fill,
+            iconColor: FintechColors.categoryBlue,
+            backgroundColor: FintechColors.categoryBlueBg,
+            title: 'Manual Entry',
+            subtitle: 'This expense will need a receipt attachment before submission.',
+          ),
+        );
+      },
     );
   }
 
@@ -2334,17 +2362,24 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
                   ),
                   child: Row(
                     children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: FintechColors.primary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                        child: Icon(
-                          CupertinoIcons.doc_fill,
-                          color: FintechColors.primary,
-                          size: 20,
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        child: SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: file is File
+                              ? Image.file(
+                                  file,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    color: FintechColors.primary.withValues(alpha: 0.1),
+                                    child: Icon(CupertinoIcons.doc_fill, color: FintechColors.primary, size: 20),
+                                  ),
+                                )
+                              : Container(
+                                  color: FintechColors.primary.withValues(alpha: 0.1),
+                                  child: Icon(CupertinoIcons.doc_fill, color: FintechColors.primary, size: 20),
+                                ),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -2763,6 +2798,8 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         // Multi-scan: upload all scan items (they have pre-read bytes).
         // Legacy single: upload pendingReceiptBytes (from camera_screen flow).
         // The temp draft (if any) is deleted after upload.
+        int receiptUploadedCount = 0;
+        int receiptFailedCount = 0;
         final scanItems = apiProvider.scanItems;
         if (scanItems.isNotEmpty) {
           for (final item in scanItems) {
@@ -2771,7 +2808,10 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
               file: item.bytes,
               fileName: item.fileName,
             );
-            if (uploadResult == null) {
+            if (uploadResult != null) {
+              receiptUploadedCount++;
+            } else {
+              receiptFailedCount++;
             }
           }
         } else if (apiProvider.pendingReceiptBytes != null) {
@@ -2781,8 +2821,33 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
             file: receiptBytes,
             fileName: 'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg',
           );
-          if (uploadResult == null) {
+          if (uploadResult != null) {
+            receiptUploadedCount++;
+          } else {
+            receiptFailedCount++;
           }
+        }
+
+        // Show receipt upload failure warning (non-blocking)
+        if (receiptFailedCount > 0 && receiptUploadedCount == 0) {
+          appProvider.showNotification(
+            'Receipt upload failed. You can attach it later from expense detail.',
+            type: 'warning',
+          );
+        } else if (receiptFailedCount > 0) {
+          appProvider.showNotification(
+            '$receiptUploadedCount receipt(s) uploaded, $receiptFailedCount failed',
+            type: 'warning',
+          );
+        }
+
+        // Refresh expense after receipt uploads to get updated receipt list.
+        // getExpense() internally calls refreshReceipts() which updates
+        // _selectedExpense with the receipts array. Use selectedExpense
+        // (not the return value) since refreshReceipts updates it after return.
+        if (receiptUploadedCount > 0) {
+          await apiProvider.getExpense(result.id);
+          result = apiProvider.selectedExpense ?? result;
         }
 
         // Delete the temp draft expense that was created for OCR (if any)
@@ -2845,11 +2910,10 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
 
           apiProvider.clearPendingAttachments();
 
-          // IMPORTANT: Refresh expense to get updated receipts list
-          final refreshedExpense = await apiProvider.getExpense(result.id);
-          if (refreshedExpense != null) {
-            result = refreshedExpense;
-          }
+          // IMPORTANT: Refresh expense to get updated receipts list.
+          // Use selectedExpense after getExpense since refreshReceipts updates it.
+          await apiProvider.getExpense(result.id);
+          result = apiProvider.selectedExpense ?? result;
 
           // Show upload status
           if (failedCount > 0) {
@@ -2923,7 +2987,9 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
           final submitSuccess = await apiProvider.submitExpense(result.id);
 
           if (submitSuccess) {
-            // submitExpense already updates selectedExpense with the new status
+            // submitExpense updates selectedExpense with new status.
+            // Re-fetch receipts so the success screen shows them correctly.
+            await apiProvider.refreshReceipts(result.id);
             result = apiProvider.selectedExpense;
           } else {
             // Submit failed, but expense was created as draft
@@ -2939,6 +3005,10 @@ class _NewExpenseScreenState extends State<NewExpenseScreen> {
         } else {
           apiProvider.setSelectedExpense(result);
         }
+
+        // Clear all receipt/OCR state so next "New Expense" starts fresh
+        apiProvider.clearOCRState();
+        apiProvider.clearPendingAttachments();
 
         appProvider.showNotification(
           _submitForApproval

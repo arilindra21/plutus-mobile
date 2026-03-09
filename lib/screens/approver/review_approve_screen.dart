@@ -762,7 +762,19 @@ class _ApiApprovalCard extends StatelessWidget {
 
     // Get full requester details
     final requester = apiProvider.getTaskRequesterDetails(task);
-    final categoryLower = task.category.isNotEmpty ? task.category.toLowerCase() : 'expense';
+    // Resolve category from expense.categoryId (source of truth), then task.category.
+    // Try embedded expense first, then look up from expenses list by expenseId.
+    String resolvedCategory = task.category;
+    final expense = task.expense ??
+        apiProvider.expenses.where((e) => e.id == task.expenseId).firstOrNull;
+    final expenseCategoryId = expense?.categoryId;
+    if (expenseCategoryId != null && expenseCategoryId.isNotEmpty) {
+      final fromRef = apiProvider.getCategoryName(expenseCategoryId);
+      if (fromRef != 'Uncategorized') resolvedCategory = fromRef;
+    } else if (expense != null && expense.category != 'Uncategorized' && expense.category != 'Other') {
+      resolvedCategory = expense.category;
+    }
+    final categoryLower = resolvedCategory.isNotEmpty ? resolvedCategory.toLowerCase() : 'expense';
 
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.md),
